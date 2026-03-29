@@ -1,4 +1,4 @@
-name: Auto Zip and Release (Advanced)
+name: Auto Zip and Release (Fixed)
 
 on:
   push:
@@ -11,80 +11,28 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y gh zip coreutils
-
-      - name: Build ZIP files
+      - uses: actions/checkout@v4
+      
+      - name: Build ZIPs
         run: |
-          set -e
           mkdir -p dist
-
-          echo "📦 FULL ZIP..."
-          if [ -d "ספרים" ]; then
-            zip -r -9 dist/00_FULL_COLLECTION.zip ספרים
-          fi
-
-          echo "📁 ZIP לכל תיקייה בתוך 'ספרים'..."
-          shopt -s nullglob
+          # זיפ לכל תיקייה בנפרד
           if [ -d "ספרים" ]; then
             cd ספרים
             for d in */; do
-              [ -d "$d" ] || continue
-              if [ "$(find "$d" -type f | wc -l)" -gt 0 ]; then
-                name="${d%/}"
-                zip -r -9 "../dist/${name}.zip" "$d"
-              else
-                echo "⏭️ מדלג על תיקייה ריקה: $d"
-              fi
+              name="${d%/}"
+              # הסרת תווים בעייתיים משם הקובץ למניעת שגיאות 422
+              safe_name=$(echo "$name" | tr -d ' ' | tr -cd '[:alnum:]_א-ת')
+              zip -r -9 "../dist/${safe_name}.zip" "$d"
             done
             cd ..
           fi
-
-          echo "📄 ZIP לקבצים בודדים ברוט..."
-          for f in *; do
-            if [[ -f "$f" && "$f" != "README.md" && "$f" != *.yml && "$f" != checksums.txt ]]; then
-              name="${f%.*}"
-              zip -j -9 "dist/${name}.zip" "$f"
-            fi
-          done
-
-          echo "🔐 יצירת checksums..."
-          cd dist
-          if ls *.zip >/dev/null 2>&1; then
-            sha256sum *.zip > checksums.txt
-          fi
-          cd ..
-
-          echo "✅ תוצאה:"
-          ls -lh dist
-
+          
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          gh release create "$TAG" dist/* \
-            --title "מאגר קבצים - $TAG" \
-            --notes "עודכן בתאריך: $(date +'%d/%m/%Y %H:%M:%S')"
-
-      - name: Cleanup old releases
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          releases=$(gh release list --limit 100 --json tagName --jq '.[].tagName')
-          count=0
-          for tag in $releases; do
-            count=$((count+1))
-            if [ $count -gt 3 ]; then
-              gh release delete "$tag" --yes --cleanup-tag
-            fi
-          done
+          # שימוש ב-gh release עם דריסה אם קיים (למרות שה-TAG ייחודי)
+          gh release create "$TAG" dist/*.zip --title "מאגר ספרים $TAG" --notes "עדכון אוטומטי"
