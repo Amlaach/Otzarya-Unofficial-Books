@@ -1,25 +1,83 @@
-# תיקון timeout + chunked upload
-CHUNK_SIZE = 1024 * 1024  # 1MB per chunk
+name: Auto Zip and Release
 
-for attempt in range(3):
-    with open(fpath, "rb") as f:
-        file_size = os.path.getsize(fpath)
-        resp = requests.post(
-            upload_url,
-            data=f,
-            headers={
-                **headers,
-                "Content-Type": "application/zip",
-                "Content-Length": str(file_size)   # חובה ל-GitHub API
-            },
-            timeout=(10, 600)  # (connect timeout, read/write timeout)
-                               # 600 שניות = 10 דקות להעלאה
-        )
-    if resp.status_code == 201:
-        print(f"  ✓ Uploaded successfully")
-        break
-    print(f"  Attempt {attempt+1} failed: {resp.status_code} {resp.text[:200]}")
-    time.sleep(5)
-else:
-    print(f"  ✗ Failed after 3 attempts: {fname}")
-    failed.append(fname)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set UTF-8 locale
+        run: |
+          sudo locale-gen en_US.UTF-8
+          echo "LANG=en_US.UTF-8" >> $GITHUB_ENV
+          echo "LC_ALL=en_US.UTF-8" >> $GITHUB_ENV
+
+      - name: Build ZIPs
+        run: |
+          set -euo pipefail
+          export LANG=en_US.UTF-8
+          export LC_ALL=en_US.UTF-8
+
+          rm -rf dist
+          mkdir -p dist
+
+          if [ ! -d "ספרים" ]; then
+            echo "ERROR: Directory 'ספרים' not found!"
+            exit 1
+          fi
+
+          cd "ספרים"
+          for d in */; do
+            [ -e "$d" ] || continue
+            name="${d%/}"
+
+            # המרת שם לASCII בטוח
+            safe_name=$(echo "$name" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || true)
+            if [ -z "$safe_name" ] || echo "$safe_name" | grep -qP '[^\x20-\x7E]'; then
+              safe_name="book_$(echo "$name" | md5sum | cut -c1-8)"
+            fi
+            # החלפת רווחים במקף
+            safe_name=$(echo "$safe_name" | tr ' ' '-')
+
+            echo "Zipping: '$name' -> '${safe_name}.zip'"
+            zip -r -9 "../dist/${safe_name}.zip" "$d"
+          done
+          cd ..
+
+          echo "=== Files in dist ==="
+          ls -lh dist/
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v$(date +'%Y%m%d-%H%M%S')"
+          echo "Release $TAG" > /tmp/release_notes.txt
+
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --notes-file /tmp/release_notes.txt
+
+          echo "TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Upload Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          for f in dist/*.zip; do
+            echo "Uploading $f..."
+            gh release upload "${{ env.TAG }}" "$f" --clobber
+          done
+
+          echo "Done."
