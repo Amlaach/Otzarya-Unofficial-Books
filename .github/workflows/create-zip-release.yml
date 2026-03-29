@@ -1,75 +1,34 @@
-name: Auto Zip and Release (Final Stable)
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build ZIPs
-        run: |
-          mkdir -p dist
-          if [ -d "ספרים" ]; then
-            cd "ספרים"
-            for d in */; do
-              [ -e "$d" ] || continue
-              name="${d%/}"
-              zip -r -9 "../dist/${name}.zip" "$d"
-            done
-          fi
-
-      - name: Create Release
-        id: create_release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="v$(date +'%Y%m%d-%H%M%S')"
-          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "אוטומציה"
-          echo "TAG=$TAG" >> $GITHUB_ENV
-
-      - name: Upload Assets (Safe Python Upload)
+- name: Upload Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          TAG: ${{ env.TAG }}
         run: |
-          python3 - <<EOF
-          import os, requests, urllib.parse, time
-          
-          token = os.getenv("GITHUB_TOKEN")
-          repo = os.getenv("REPO")
-          tag = os.getenv("TAG")
-          headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-          
-          # קבלת ה-ID של ה-Release שנוצר
-          time.sleep(2)
-          release_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
-          release_id = requests.get(release_url, headers=headers).json()["id"]
-          
-          count = 1
-          for fname in os.listdir("dist"):
-              if not fname.endswith(".zip"): continue
-              
-              # הגדרת שמות: שם טכני ל-URL ותווית בעברית לתצוגה
-              safe_name = f"book_{count}.zip"
-              label = fname # השם המקורי בעברית
-              
-              print(f"Uploading {label} as {safe_name}...")
-              
-              upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets"
-              params = {"name": safe_name, "label": label}
-              
-              with open(os.path.join("dist", fname), "rb") as f:
-                  u_headers = {"Authorization": f"token {token}", "Content-Type": "application/zip"}
-                  r = requests.post(upload_url, params=params, data=f, headers=u_headers)
-                  if r.status_code != 201:
-                      print(f"Error: {r.text}")
-              count += 1
-          EOF
+          set -euo pipefail
+
+          # קבלת release_id לפי TAG
+          RELEASE_ID=$(curl -s \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+          echo "Release ID: $RELEASE_ID"
+
+          count=1
+          for f in dist/*.zip; do
+            ORIGINAL_NAME=$(basename "$f")
+            SAFE_NAME="book_${count}.zip"
+
+            echo "מעלה: $ORIGINAL_NAME בתור $SAFE_NAME (label: $ORIGINAL_NAME)"
+
+            curl -s --fail \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/zip" \
+              --data-binary @"$f" \
+              "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$SAFE_NAME")&label=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$ORIGINAL_NAME")"
+
+            echo "✓ הועלה: $ORIGINAL_NAME"
+            count=$((count + 1))
+          done
+
+          echo "✅ כל הקבצים הועלו בהצלחה"
