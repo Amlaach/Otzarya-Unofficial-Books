@@ -1,4 +1,4 @@
-name: Auto Zip and Release (Hebrew Support)
+name: Auto Zip and Release (Hebrew Supported)
 
 on:
   push:
@@ -13,17 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Build ZIPs
         run: |
           mkdir -p dist
           if [ -d "ספרים" ]; then
             cd "ספרים"
-            # לולאה שעוברת על התיקיות בצורה בטוחה
+            # לולאה שעוברת על התיקיות
             for d in */; do
               [ -e "$d" ] || continue
               name="${d%/}"
-              # ניקוי רווחים בלבד, שמירה על עברית
+              # הסרת רווחים בלבד לשם הקובץ הזמני
               safe_name=$(echo "$name" | tr -d ' ')
               zip -r -9 "../dist/${safe_name}.zip" "$d"
             done
@@ -34,18 +34,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # יצירת תג ייחודי מבוסס זמן
           TAG="v$(date +'%Y%m%d-%H%M%S')"
           
-          # 1. יצירת ה-Release תחילה (ללא קבצים)
+          echo "Creating release $TAG..."
           gh release create "$TAG" \
-            --title "עדכון מאגר $TAG" \
-            --notes "העלאה אוטומטית"
-          
-          # 2. העלאת כל הקבצים מתיקיית dist
-          # ה-CLI של GitHub (gh) יודע לטפל בקידוד עברית טוב יותר כשהוא מעלה קבצים קיימים
-          if ls dist/*.zip 1> /dev/null 2>&1; then
-            gh release upload "$TAG" dist/*.zip --clobber
-          else
-            echo "No zip files found!"
-            exit 1
-          fi
+            --title "עדכון מאגר - $(date +'%d/%m/%Y')" \
+            --notes "העלאה אוטומטית של קבצים"
+
+          # העלאת הקבצים אחד אחד עם שימוש ב-Label עבור העברית
+          count=1
+          for file in dist/*.zip; do
+            if [ -f "$file" ]; then
+              ORIGINAL_NAME=$(basename "$file")
+              echo "Uploading $ORIGINAL_NAME..."
+              
+              # העלאה: 
+              # --name: השם הטכני של הקובץ (באנגלית/מספר) כדי למנוע 404
+              # --label: השם שיוצג למשתמש (תומך בעברית)
+              gh release upload "$TAG" "$file" \
+                --name "archive_${count}.zip" \
+                --label "$ORIGINAL_NAME" \
+                --clobber
+              
+              count=$((count + 1))
+            fi
+          done
