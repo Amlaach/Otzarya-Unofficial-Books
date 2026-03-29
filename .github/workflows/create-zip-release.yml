@@ -27,7 +27,9 @@ jobs:
           mkdir -p dist
 
           echo "📦 FULL ZIP..."
-          zip -r -9 dist/00_FULL_COLLECTION.zip ספרים "רשימת ספרים שיש במאגר כרגע"
+          if [ -d "ספרים" ]; then
+            zip -r -9 dist/00_FULL_COLLECTION.zip ספרים
+          fi
 
           echo "📁 ZIP לכל תיקייה בתוך 'ספרים'..."
           shopt -s nullglob
@@ -47,7 +49,7 @@ jobs:
 
           echo "📄 ZIP לקבצים בודדים ברוט..."
           for f in *; do
-            if [[ -f "$f" ]]; then
+            if [[ -f "$f" && "$f" != "README.md" && "$f" != *.yml && "$f" != checksums.txt ]]; then
               name="${f%.*}"
               zip -j -9 "dist/${name}.zip" "$f"
             fi
@@ -55,7 +57,9 @@ jobs:
 
           echo "🔐 יצירת checksums..."
           cd dist
-          sha256sum * > checksums.txt
+          if ls *.zip >/dev/null 2>&1; then
+            sha256sum *.zip > checksums.txt
+          fi
           cd ..
 
           echo "✅ תוצאה:"
@@ -66,11 +70,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-
           gh release create "$TAG" dist/* \
-            --title "מאגר ספרים - $TAG" \
+            --title "מאגר קבצים - $TAG" \
             --notes "עודכן בתאריך: $(date +'%d/%m/%Y %H:%M:%S')"
 
       - name: Cleanup old releases
@@ -78,9 +80,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-
           releases=$(gh release list --limit 100 --json tagName --jq '.[].tagName')
-
           count=0
           for tag in $releases; do
             count=$((count+1))
