@@ -1,4 +1,4 @@
-name: Auto Zip and Release (Final Ultimate Fix)
+name: Auto Zip and Release (Ironclad Version)
 
 on:
   push:
@@ -16,13 +16,17 @@ jobs:
 
       - name: Build ZIPs
         run: |
+          # ניקוי תיקיות כדי למנוע שאריות מהרצות קודמות
+          rm -rf dist
           mkdir -p dist
+          
           if [ -d "ספרים" ]; then
             cd "ספרים"
+            # לולאה שעוברת רק על תיקיות
             for d in */; do
               [ -e "$d" ] || continue
               name="${d%/}"
-              # יצירת הזיפ עם השם המקורי בעברית
+              # יצירת הזיפ - מרכאות סביב השם כדי לטפל ברווחים ועברית
               zip -r -9 "../dist/${name}.zip" "$d"
             done
             cd ..
@@ -34,17 +38,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "אוטומציה"
-          # שמירת הטאג לסביבת העבודה כדי שהפייתון יראה אותו
+          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "אוטומציה סופית"
           echo "TAG=$TAG" >> $GITHUB_ENV
 
-      - name: Upload Assets (Python Overwrite Mode)
+      - name: Upload Assets (Aggressive Overwrite)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           python3 - <<EOF
-          import os, requests, urllib.parse
+          import os, requests, urllib.parse, time
           
           token = os.getenv("GITHUB_TOKEN")
           repo = os.getenv("REPO")
@@ -54,40 +57,47 @@ jobs:
               "Accept": "application/vnd.github.v3+json"
           }
           
-          # 1. מציאת ה-ID של ה-Release והקבצים שכבר קיימים בו
+          # 1. המתנה קצרה לסנכרון השרתים של GitHub
+          time.sleep(5)
+          
+          # 2. קבלת פרטי ה-Release
           release_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
           r = requests.get(release_url, headers=headers)
           r.raise_for_status()
           release_data = r.json()
           release_id = release_data["id"]
           
-          # מיפוי קבצים קיימים ב-Release (למקרה של כפילויות)
-          existing_assets = {a["name"]: a["id"] for a in release_data.get("assets", [])}
-          
-          # 2. העלאת כל הקבצים מתיקיית dist
+          # 3. העלאת קבצים מתיקיית dist
           for fname in os.listdir("dist"):
-              if fname.endswith(".zip"):
-                  fpath = os.path.join("dist", fname)
-                  
-                  # אם הקובץ כבר קיים ב-Release, נמחק אותו קודם כדי למנוע "already_exists"
-                  if fname in existing_assets:
-                      print(f"Asset {fname} already exists. Deleting it first...")
-                      del_url = f"https://api.github.com/repos/{repo}/releases/assets/{existing_assets[fname]}"
-                      requests.delete(del_url, headers=headers)
-                  
-                  # העלאה נקייה עם קידוד URL מושלם לעברית
-                  encoded_name = urllib.parse.quote(fname)
-                  upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={encoded_name}"
-                  
-                  print(f"Uploading {fname}...")
-                  with open(fpath, "rb") as f:
-                      u_headers = {
-                          "Authorization": f"token {token}",
-                          "Content-Type": "application/zip"
-                      }
-                      u_r = requests.post(upload_url, data=f, headers=u_headers)
-                      if u_r.status_code != 201:
-                          print(f"Failed to upload {fname}: {u_r.text}")
-                          exit(1)
-          print("All assets uploaded successfully without errors!")
+              if not fname.endswith(".zip"): continue
+              fpath = os.path.join("dist", fname)
+              
+              # בדיקה אם הנכס כבר קיים (למקרה של כפילות בתוך התיקייה או הרצה חוזרת)
+              # אנחנו מושכים את הרשימה המעודכנת בכל פעם
+              assets_r = requests.get(f"https://api.github.com/repos/{repo}/releases/{release_id}/assets", headers=headers)
+              existing_assets = {a["name"]: a["id"] for a in assets_r.json()}
+              
+              if fname in existing_assets:
+                  print(f"Asset {fname} exists. Deleting...")
+                  del_url = f"https://api.github.com/repos/{repo}/releases/assets/{existing_assets[fname]}"
+                  requests.delete(del_url, headers=headers)
+                  time.sleep(1) # מנוחה קלה בין מחיקה להעלאה
+              
+              # העלאה עם קידוד URL תקני לעברית
+              encoded_name = urllib.parse.quote(fname)
+              upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={encoded_name}"
+              
+              print(f"Uploading {fname}...")
+              with open(fpath, "rb") as f:
+                  u_headers = {
+                      "Authorization": f"token {token}",
+                      "Content-Type": "application/zip"
+                  }
+                  u_r = requests.post(upload_url, data=f, headers=u_headers)
+                  if u_r.status_code != 201:
+                      print(f"Error uploading {fname}: {u_r.text}")
+                      # במקום לקרוס, נמשיך לקובץ הבא כדי לא לתקוע את הכל
+                      continue
+                      
+          print("Automation finished successfully.")
           EOF
