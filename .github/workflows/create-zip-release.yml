@@ -1,4 +1,4 @@
-name: Auto Zip and Release
+name: Auto Zip and Release (Advanced)
 
 on:
   push:
@@ -13,36 +13,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 📥 שליפת הקוד
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 🧰 התקנת GitHub CLI
-      - name: Install GitHub CLI
-        run: sudo apt-get update && sudo apt-get install -y gh zip
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y gh zip coreutils
 
-      # 📦 יצירת קבצי ZIP
       - name: Build ZIP files
         run: |
           set -e
           mkdir -p dist
 
           echo "📦 FULL ZIP..."
-          zip -r -9 dist/00_FULL_COLLECTION.zip . \
-            -x "*.git*" "dist/*" ".github/*"
+          zip -r -9 dist/00_FULL_COLLECTION.zip ספרים "רשימת ספרים שיש במאגר כרגע"
 
-          echo "📁 ZIP לכל תיקייה..."
+          echo "📁 ZIP לכל תיקייה בתוך 'ספרים'..."
           shopt -s nullglob
-          for d in */; do
-            if [[ "$d" != ".git/" && "$d" != "dist/" && "$d" != ".github/" ]]; then
-              name="${d%/}"
-              zip -r -9 "dist/${name}.zip" "$d"
-            fi
-          done
+          if [ -d "ספרים" ]; then
+            cd ספרים
+            for d in */; do
+              [ -d "$d" ] || continue
+              if [ "$(find "$d" -type f | wc -l)" -gt 0 ]; then
+                name="${d%/}"
+                zip -r -9 "../dist/${name}.zip" "$d"
+              else
+                echo "⏭️ מדלג על תיקייה ריקה: $d"
+              fi
+            done
+            cd ..
+          fi
 
-          echo "📄 ZIP לקבצים בודדים..."
+          echo "📄 ZIP לקבצים בודדים ברוט..."
           for f in *; do
             if [[ -f "$f" ]]; then
               name="${f%.*}"
@@ -50,10 +53,14 @@ jobs:
             fi
           done
 
+          echo "🔐 יצירת checksums..."
+          cd dist
+          sha256sum * > checksums.txt
+          cd ..
+
           echo "✅ תוצאה:"
           ls -lh dist
 
-      # 🚀 יצירת Release
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -62,20 +69,15 @@ jobs:
 
           TAG="v$(date +'%Y%m%d-%H%M%S')"
 
-          echo "Creating release $TAG"
-
           gh release create "$TAG" dist/* \
             --title "מאגר ספרים - $TAG" \
             --notes "עודכן בתאריך: $(date +'%d/%m/%Y %H:%M:%S')"
 
-      # 🧹 שמירת רק 3 גרסאות
-      - name: Keep only last 3 releases
+      - name: Cleanup old releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-
-          echo "Cleaning old releases..."
 
           releases=$(gh release list --limit 100 --json tagName --jq '.[].tagName')
 
@@ -83,7 +85,6 @@ jobs:
           for tag in $releases; do
             count=$((count+1))
             if [ $count -gt 3 ]; then
-              echo "Deleting $tag"
               gh release delete "$tag" --yes --cleanup-tag
             fi
           done
