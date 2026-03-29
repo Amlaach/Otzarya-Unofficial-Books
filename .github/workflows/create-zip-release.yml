@@ -1,66 +1,54 @@
 name: Zero-Downtime Release with Category Zips
-
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   package-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # הרשאה חיונית ליצירת Release
-      pull-requests: read
-
+      contents: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           lfs: true
 
-      - name: Get readable timestamp
-        id: vars
+      - name: Prepare Files
         run: |
-          echo "readable_date=$(date +'%d/%m/%Y %H:%M')" >> $GITHUB_ENV
-          echo "tag_date=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_ENV
-
-      - name: Zip Full Repository
-        run: zip -r Full-Repository-Download.zip . -x "*.git*" -x "*.github*"
-
-      - name: Zip Categories and Individual Files
-        run: |
+          # יצירת ה-ZIP המלא עם קידומת 00 כדי שיהיה ראשון
+          zip -r "00_Full-Repository-Download.zip" . -x "*.git*" -x "*.github*"
+          
           if [ -d "ספרים" ]; then
             cd ספרים
-            # אריזת תיקיות
             for d in */ ; do
-              folder_name=$(basename "$d")
-              zip -r "../${folder_name}.zip" "$d"
+              zip -r "../$(basename "$d").zip" "$d"
             done
-            # אריזת קבצים בודדים כדי למנוע חסימת 418
             find . -maxdepth 1 -type f -name "*.txt" -exec zip "../קבצים_בודדים.zip" {} +
-            cd ..
           fi
 
-      - name: Create New Release
+      - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: rel-${{ env.tag_date }}
-          name: "עדכון מאגר: ${{ env.readable_date }}"
-          files: |
-            Full-Repository-Download.zip
-            *.zip
+          tag_name: rel-${{ github.run_id }}
+          name: "עדכון מאגר: $(date +'%d/%m/%Y %H:%M')"
+          files: "*.zip"
           make_latest: true
           body: |
-            ### 📚 עדכון מאגר אוצריא
-            המאגר עודכן בהצלחה. כל הקבצים נארזו ב-ZIP למניעת חסימות.
+            # מאגר הספרים המותאמים לתוכנת אוצריא:
+            # מאגר הספרים המותאמים לתוכנת אוצריא
             
-            📅 **תאריך:** ${{ env.readable_date }}
+            ### בדף זה תוכלו להוריד את קבצי המאגר המעודכנים ביותר. הגרסה נוצרת באופן אוטומטי בכל פעם שמתווספים ספרים חדשים.
+            
+            ---
+            ## אפשרויות הורדה
+            
+            <small>זמן ריצה: $(date +'%d/%m/%Y %H:%M')</small>
 
       - name: Cleanup Old Releases
         uses: dev-drprasad/delete-older-releases@v0.3.0
         with:
-          keep_latest: 3 # נשמור 3 ליתר ביטחון
+          keep_latest: 2
           delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
