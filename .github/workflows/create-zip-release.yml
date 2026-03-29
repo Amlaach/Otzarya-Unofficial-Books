@@ -1,4 +1,4 @@
-name: Auto Zip and Release (Final Fix)
+name: Auto Zip and Release (Final Ultimate Fix)
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
             for d in */; do
               [ -e "$d" ] || continue
               name="${d%/}"
-              # יצירת הזיפ עם השם המקורי
+              # יצירת הזיפ עם השם המקורי בעברית
               zip -r -9 "../dist/${name}.zip" "$d"
             done
             cd ..
@@ -35,9 +35,10 @@ jobs:
         run: |
           TAG="v$(date +'%Y%m%d-%H%M%S')"
           gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "אוטומציה"
+          # שמירת הטאג לסביבת העבודה כדי שהפייתון יראה אותו
           echo "TAG=$TAG" >> $GITHUB_ENV
 
-      - name: Upload Assets (Python Safe Way)
+      - name: Upload Assets (Python Overwrite Mode)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -48,19 +49,33 @@ jobs:
           token = os.getenv("GITHUB_TOKEN")
           repo = os.getenv("REPO")
           tag = os.getenv("TAG")
+          headers = {
+              "Authorization": f"token {token}",
+              "Accept": "application/vnd.github.v3+json"
+          }
           
-          # 1. קבלת ה-ID של ה-Release שנוצר
+          # 1. מציאת ה-ID של ה-Release והקבצים שכבר קיימים בו
           release_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
-          headers = {"Authorization": f"token {token}"}
           r = requests.get(release_url, headers=headers)
           r.raise_for_status()
-          release_id = r.json()["id"]
+          release_data = r.json()
+          release_id = release_data["id"]
+          
+          # מיפוי קבצים קיימים ב-Release (למקרה של כפילויות)
+          existing_assets = {a["name"]: a["id"] for a in release_data.get("assets", [])}
           
           # 2. העלאת כל הקבצים מתיקיית dist
           for fname in os.listdir("dist"):
               if fname.endswith(".zip"):
                   fpath = os.path.join("dist", fname)
-                  # קידוד השם לעברית בטוחה ל-URL
+                  
+                  # אם הקובץ כבר קיים ב-Release, נמחק אותו קודם כדי למנוע "already_exists"
+                  if fname in existing_assets:
+                      print(f"Asset {fname} already exists. Deleting it first...")
+                      del_url = f"https://api.github.com/repos/{repo}/releases/assets/{existing_assets[fname]}"
+                      requests.delete(del_url, headers=headers)
+                  
+                  # העלאה נקייה עם קידוד URL מושלם לעברית
                   encoded_name = urllib.parse.quote(fname)
                   upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={encoded_name}"
                   
@@ -74,5 +89,5 @@ jobs:
                       if u_r.status_code != 201:
                           print(f"Failed to upload {fname}: {u_r.text}")
                           exit(1)
-          print("All assets uploaded successfully!")
+          print("All assets uploaded successfully without errors!")
           EOF
