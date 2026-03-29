@@ -1,4 +1,4 @@
-name: Zero-Downtime Release with Cleanup
+name: Zero-Downtime Release with Category Zips
 
 on:
   push:
@@ -16,28 +16,51 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          lfs: true # מביא את הקבצים האמיתיים מ-LFS
+          lfs: true
 
-      - name: Get timestamp
+      # עדכון פורמט התאריך למשהו קריא (יום/חודש/שנה שעה:דקות)
+      - name: Get readable timestamp
         id: vars
-        run: echo "sha_short=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_ENV
+        run: |
+          echo "readable_date=$(date +'%d/%m/%Y %H:%M')" >> $GITHUB_ENV
+          echo "tag_date=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_ENV
 
-      - name: Zip files
+      - name: Zip Full Repository
         run: zip -r Full-Repository-Download.zip . -x "*.git*" -x "*.github*"
+
+      - name: Zip Each Category Separately
+        run: |
+          if [ -d "ספרים" ]; then
+            cd ספרים
+            for d in */ ; do
+              folder_name=$(basename "$d")
+              zip -r "../${folder_name}.zip" "$d"
+            done
+            cd ..
+          fi
 
       - name: Create New Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: rel-${{ env.sha_short }}
-          name: "Library Update: ${{ env.sha_short }}"
-          files: Full-Repository-Download.zip
+          tag_name: rel-${{ env.tag_date }}
+          name: "עדכון מאגר: ${{ env.readable_date }}"
+          files: |
+            Full-Repository-Download.zip
+            *.zip
           make_latest: true
           body: |
-            גרסה זו מתעדכנת אוטומטית בכל פעם שמועלים ספרים חדשים למאגר.
-            ה-ZIP מכיל את קבצי ה-PDF והקבצים הגדולים (150MB+) בגרסתם המלאה.
+            ### 📚 ברוכים הבאים למאגר הספרים של אוצריא
+            
+            בדף זה תוכלו להוריד את קבצי המאגר המעודכנים ביותר. הגרסה נוצרת באופן אוטומטי בכל פעם שמתווספים ספרים חדשים.
+            
+            **אפשרויות הורדה:**
+            1. **המאגר המלא:** הורידו את `Full-Repository-Download.zip` לקבלת כל הספרים בבת אחת.
+            2. **חבילות ספציפיות:** ניתן להוריד קבצי ZIP נפרדים לפי קטגוריות (הלכה, מוסר וכו') כדי לחסוך זמן ושטח אחסון.
             
             ---
-            *נוצר אוטומטית בתאריך: ${{ env.sha_short }}*
+            **הערה למשתמשי נטפרי:** הורדת קבצי ה-ZIP מומלצת במיוחד כדי למנוע חסימות בתהליך ההורדה האוטומטי.
+            
+            📅 **תאריך עדכון:** ${{ env.readable_date }}
 
       - name: Cleanup Old Releases
         uses: dev-drprasad/delete-older-releases@v0.3.0
