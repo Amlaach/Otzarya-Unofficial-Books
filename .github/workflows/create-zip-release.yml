@@ -15,45 +15,52 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set Variables
         id: vars
         run: |
           echo "file_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-          echo "display_date=$(date +'%d/%m/%Y %H:%M')" >> $GITHUB_OUTPUT
           echo "full_zip=00_כל-המאגר-להורדה_$(date +'%Y-%m-%d').zip" >> $GITHUB_OUTPUT
 
       - name: Prepare Files
         run: |
-          # יצירת הארכיון המלא
-          zip -r "${{ steps.vars.outputs.full_zip }}" . -x "*.git*" -x "*.github*" "*.zip"
+          # 1. התקנת כלים לתמיכה בעברית (UTF-8)
+          sudo apt-get update && sudo apt-get install -y zip
+
+          # 2. יצירת הארכיון המלא עם תמיכה בעברית
+          # הדגל -UN=UTF8 מבטיח שהשמות לא יהפכו לג'יבריש בווינדוס
+          zip -r -UN=UTF8 "${{ steps.vars.outputs.full_zip }}" . -x "*.git*" -x "*.github*" "*.zip"
           
-          # יצירת זיפים לתיקיות בתוך "ספרים"
+          # 3. יצירת זיפים לתיקיות בתוך "ספרים"
           if [ -d "ספרים" ]; then
             cd "ספרים"
-            for d in */ ; do
-              [ -e "$d" ] || continue
-              zip -r "../$(basename "$d").zip" "$d"
+            # שימוש ב-find מבטיח שנתפוס גם תיקיות עם רווחים, גרשיים או שמות מורכבים
+            find . -maxdepth 1 -type d -not -name "." | while read -r d; do
+              FOLDER_NAME=$(basename "$d")
+              echo "אורז תיקייה: $FOLDER_NAME"
+              zip -r -UN=UTF8 "../$FOLDER_NAME.zip" "$d"
             done
-            find . -maxdepth 1 -type f -name "*.txt" -exec zip "../קבצים_בודדים.zip" {} +
+            
+            # איסוף קבצים בודדים שלא נמצאים בתוך תיקייה
+            find . -maxdepth 1 -type f -exec zip -UN=UTF8 "../קבצים_בודדים.zip" {} + || true
           fi
 
-      - name: Create and Upload Release
+      - name: Verify and Upload Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. ניהול סבב גרסאות - שימוש ב-delete-tag לניקוי יסודי
+          # 1. ניקוי יסודי של גרסאות קודמות למניעת שגיאות 422
           gh release delete backup-version --yes || true
-          git tag -d backup-version || true
-          push origin :refs/tags/backup-version || true
+          git push --delete origin backup-version || true
           
-          # העברת הגרסה הנוכחית לגיבוי
+          # 2. העברת הגרסה הקיימת לגיבוי
           gh release edit latest --tag backup-version --title "גיבוי גרסה קודמת" || true
           
-          # 2. הכנת תוכן ההודעה לפי הדרישות שלך
+          # 3. הכנת תוכן ההודעה (ללא כותרת כפולה ועם תאריך תקין)
+          # שים לב: הכותרת הגדולה מוגדרת רק פעם אחת ב-gh release create למטה
           cat <<EOF > release_notes.md
-          # מאגר הספרים המותאמים לתוכנת אוצריא
-          
           ### בדף זה תוכלו להוריד את קבצי המאגר המעודכנים ביותר. הגרסה נוצרת באופן אוטומטי בכל פעם שמתווספים ספרים חדשים.
           
           ---
@@ -69,15 +76,17 @@ jobs:
           להלן הקבצים המחולקים לפי נושאים כפי שהם מופיעים בתיקיות המאגר. רשימת הקבצים המלאה מופיעה מטה.
           
           ---
-          **תאריך עדכון אחרון:** ${{ steps.vars.outputs.display_date }}
+          **תאריך עדכון אחרון:** $(date +'%d/%m/%Y %H:%M')
           EOF
 
-          # 3. יצירת ה-Release (ללא קבצים בינתיים)
+          # 4. יצירת ה-Release החדש
           gh release create latest --title "מאגר הספרים המותאמים לתוכנת אוצריא" --notes-file release_notes.md --target main || \
           gh release edit latest --title "מאגר הספרים המותאמים לתוכנת אוצריא" --notes-file release_notes.md
 
-          # 4. העלאת קבצים אחד אחד כדי למנוע קריסה של ה-API בגלל עברית
+          # 5. העלאת קבצים אחד אחד עם אימות
           for file in *.zip; do
-            echo "מעלה קובץ: $file..."
-            gh release upload latest "$file" --clobber || echo "נכשל בהעלאת $file, ממשיך הלאה..."
+            if [ -f "$file" ]; then
+              echo "מעלה נכס: $file"
+              gh release upload latest "$file" --clobber || echo "שגיאה בהעלאת $file, ממשיך לקובץ הבא..."
+            fi
           done
