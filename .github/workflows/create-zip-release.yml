@@ -7,6 +7,7 @@ on:
     paths:
       - 'ספרים/**'
       - 'רשימת ספרים שיש במאגר כרגע'
+  workflow_dispatch: # מאפשר הרצה ידנית לבדיקה
 
 permissions:
   contents: write
@@ -18,24 +19,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # מאפשר השוואה לגרסה הקודמת
+          fetch-depth: 2
 
       - name: Calculate changes
         id: changes
         run: |
-          # ספירת קבצים חדשים שנוספו בתיקיית ספרים
-          # הפקודה מחפשת קבצים במצב 'A' (Added) בתיקייה הספציפית
           NEW_BOOKS=$(git diff --name-status HEAD~1 HEAD | grep "^A" | grep "ספרים/" | cut -f2- | xargs -I {} basename "{}" | sed 's/\.[^.]*$//' | sort | uniq)
           COUNT=$(echo "$NEW_BOOKS" | grep -v '^$' | wc -l || echo 0)
-          
           if [ "$COUNT" -eq "0" ]; then
-            echo "summary=בעדכון זה בוצעו תיקוני שמות או עדכוני גרסאות קיימות." >> $GITHUB_OUTPUT
+            echo "summary=בוצע עדכון כללי למאגר." >> $GITHUB_OUTPUT
           else
-            # יצירת רשימה קצרה של עד 5 ספרים חדשים לדוגמה
             LIST=$(echo "$NEW_BOOKS" | head -n 5 | sed 's/^/* /')
-            echo "summary=בעדכון זה נוספו **$COUNT** קבצים חדשים למאגר!  " >> $GITHUB_OUTPUT
-            
-            # שמירת הרשימה כטקסט מרובה שורות
+            echo "summary=נוספו **$COUNT** קבצים חדשים למאגר!" >> $GITHUB_OUTPUT
             echo "details<<EOF" >> $GITHUB_OUTPUT
             echo "$LIST" >> $GITHUB_OUTPUT
             if [ "$COUNT" -gt 5 ]; then echo "* ...ועוד" >> $GITHUB_OUTPUT; fi
@@ -45,22 +40,18 @@ jobs:
       - name: Prepare ZIP files
         run: |
           mkdir -p dist
-          # יצירת התיקייה הזמנית למאגר המלא
-          mkdir temp_full_archive
-          cp -r "ספרים" temp_full_archive/
-          cp "רשימת ספרים שיש במאגר כרגע" temp_full_archive/
-          
-          cd temp_full_archive
-          zip -r "../dist/00_Full_Library_Collection.zip" .
-          cd ..
+          # יצירת המאגר המלא
+          zip -r "dist/00_Full_Library_Collection.zip" "ספרים" "רשימת ספרים שיש במאגר כרגע"
 
-          # יצירת זיפים נפרדים לכל תיקייה
-          find "ספרים" -maxdepth 1 -type d -not -path "ספרים" | while read -r dir; do
+          # יצירת זיפים נפרדים לתתי-תיקיות בתוך "ספרים"
+          # אנחנו מוודאים ששם הקובץ לא מכיל תווים בעייתיים
+          find "ספרים" -maxdepth 1 -mindepth 1 -type d | while read -r dir; do
             name=$(basename "$dir")
             zip -r "dist/${name}.zip" "$dir"
           done
           
-          cp "רשימת ספרים שיש במאגר כרגע" dist/
+          # העתקת קובץ הרשימה כקובץ בודד
+          cp "רשימת ספרים שיש במאגר כרגע" "dist/רשימת_ספרים_במאגר.txt"
 
       - name: Get current date
         id: date
@@ -70,29 +61,29 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: latest
-          name: מאגר ספרים מותאם למערכת
+          name: מאגר ספרים מותאם לאוצריא
+          files: dist/*
+          overwrite: true # מאפשר דריסת קבצים קיימים
           body: |
-            # מאגר ספרים מותאם למערכת
+            # מאגר ספרים מותאם לאוצריא
             
-            **תאריך עדכון הגרסה האחרונה:** ${{ steps.date.outputs.date }}
+            **תאריך עדכון אחרון:** ${{ steps.date.outputs.date }}
             
             ### 🆕 מה חדש בעדכון זה?
             ${{ steps.changes.outputs.summary }}
             ${{ steps.changes.outputs.details }}
             
             ---
-            ### 📥 הורדת המאגר המלא (כל הספרים)
-            הקובץ מכיל את כל הספרים, התיקיות וקובץ הפירוט:
-            
-            ## ➔ [לחצו כאן להורדת כל המאגר המלא במקשה אחת](https://github.com/${{ github.repository }}/releases/download/latest/00_Full_Library_Collection.zip)
+            ### 📥 הורדת המאגר המלא
+            מומלץ למשתמשים שרוצים את כל התוכן בבת אחת:
+            ## ➔ [לחצו כאן להורדת כל המאגר המלא](https://github.com/${{ github.repository }}/releases/download/latest/00_Full_Library_Collection.zip)
             
             ---
-            ### 📄 רשימת הספרים המלאה
-            [לחצו כאן להורדת קובץ רשימת הספרים בלבד](https://github.com/${{ github.repository }}/releases/download/latest/רשימת.ספרים.שיש.במאגר.כרגע)
+            ### 📄 רשימת הספרים
+            [צפייה ברשימת הספרים המלאה במאגר](https://github.com/${{ github.repository }}/releases/download/latest/רשימת_ספרים_במאגר.txt)
             
             ---
             ### 📂 הורדת תיקיות בנפרד
-            להלן התיקיות המופרדות. ניתן להוריד כל חלק מרשימת ה-**Assets** למטה.
-          files: dist/*
+            ניתן להוריד כל תיקייה בנפרד מרשימת ה-Assets למטה.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
