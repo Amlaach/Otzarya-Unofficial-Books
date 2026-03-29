@@ -15,7 +15,7 @@ jobs:
 
       - name: Prepare Files
         run: |
-          # יצירת המאגר המלא
+          # יצירת ה-ZIP הראשי
           zip -r "00_Full-Repository-Download.zip" . -x "*.git*" -x "*.github*"
           
           # יצירת זיפים לפי תיקיות
@@ -24,16 +24,15 @@ jobs:
             for d in */ ; do
               zip -r "../$(basename "$d").zip" "$d"
             done
-            # קבצים בודדים
+            # איסוף קבצים בודדים
             find . -maxdepth 1 -type f -name "*.txt" -exec zip "../קבצים_בודדים.zip" {} +
           fi
 
-      - name: Fresh Release
+      - name: Deploy Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: "Library Update"
           files: "*.zip"
+          overwrite: true # זה ימנע את השגיאה שראית בתמונה
           make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
