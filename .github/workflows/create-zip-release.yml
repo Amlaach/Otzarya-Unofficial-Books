@@ -1,4 +1,4 @@
-name: Auto Zip and Release (Fixed)
+name: Auto Zip and Release (Final Fix)
 
 on:
   push:
@@ -22,33 +22,57 @@ jobs:
             for d in */; do
               [ -e "$d" ] || continue
               name="${d%/}"
-              # יצירת זיפ עם השם המקורי בעברית בתוך תיקיית dist
+              # יצירת הזיפ עם השם המקורי
               zip -r -9 "../dist/${name}.zip" "$d"
             done
             cd ..
           fi
 
-      - name: Create and Upload Release
+      - name: Create Release
+        id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          
-          # יצירת ה-Release תחילה
-          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "עדכון אוטומטי"
+          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "אוטומציה"
+          echo "TAG=$TAG" >> $GITHUB_ENV
 
-          # העלאת קבצים: שם טכני באנגלית (למניעת 404) ותווית בעברית (בשביל ה-Python)
-          count=1
-          for file in dist/*.zip; do
-            if [ -f "$file" ]; then
-              ORIGINAL_NAME=$(basename "$file")
-              echo "Uploading $ORIGINAL_NAME as archive_${count}.zip"
-              
-              gh release upload "$TAG" "$file" \
-                --name "archive_${count}.zip" \
-                --label "$ORIGINAL_NAME" \
-                --clobber
-              
-              count=$((count + 1))
-            fi
-          done
+      - name: Upload Assets (Python Safe Way)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<EOF
+          import os, requests, urllib.parse
+          
+          token = os.getenv("GITHUB_TOKEN")
+          repo = os.getenv("REPO")
+          tag = os.getenv("TAG")
+          
+          # 1. קבלת ה-ID של ה-Release שנוצר
+          release_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+          headers = {"Authorization": f"token {token}"}
+          r = requests.get(release_url, headers=headers)
+          r.raise_for_status()
+          release_id = r.json()["id"]
+          
+          # 2. העלאת כל הקבצים מתיקיית dist
+          for fname in os.listdir("dist"):
+              if fname.endswith(".zip"):
+                  fpath = os.path.join("dist", fname)
+                  # קידוד השם לעברית בטוחה ל-URL
+                  encoded_name = urllib.parse.quote(fname)
+                  upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={encoded_name}"
+                  
+                  print(f"Uploading {fname}...")
+                  with open(fpath, "rb") as f:
+                      u_headers = {
+                          "Authorization": f"token {token}",
+                          "Content-Type": "application/zip"
+                      }
+                      u_r = requests.post(upload_url, data=f, headers=u_headers)
+                      if u_r.status_code != 201:
+                          print(f"Failed to upload {fname}: {u_r.text}")
+                          exit(1)
+          print("All assets uploaded successfully!")
+          EOF
