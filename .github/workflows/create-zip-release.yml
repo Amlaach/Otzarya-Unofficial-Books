@@ -42,11 +42,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. ניהול סבב גרסאות (מחיקת גיבוי ישן והעברת הנוכחי לגיבוי)
-          gh release delete backup-version --yes --cleanup-tag || true
+          # 1. ניהול סבב גרסאות - שימוש ב-delete-tag לניקוי יסודי
+          gh release delete backup-version --yes || true
+          git tag -d backup-version || true
+          push origin :refs/tags/backup-version || true
+          
+          # העברת הגרסה הנוכחית לגיבוי
           gh release edit latest --tag backup-version --title "גיבוי גרסה קודמת" || true
           
-          # 2. יצירת גוף ההודעה לקובץ זמני (כדי למנוע בעיות תווים בטרמינל)
+          # 2. הכנת תוכן ההודעה לפי הדרישות שלך
           cat <<EOF > release_notes.md
           # מאגר הספרים המותאמים לתוכנת אוצריא
           
@@ -68,8 +72,12 @@ jobs:
           **תאריך עדכון אחרון:** ${{ steps.vars.outputs.display_date }}
           EOF
 
-          # 3. יצירת ה-Release החדש והעלאת כל קבצי ה-ZIP
-          gh release create latest *.zip \
-            --title "מאגר הספרים המותאמים לתוכנת אוצריא" \
-            --notes-file release_notes.md \
-            --target main
+          # 3. יצירת ה-Release (ללא קבצים בינתיים)
+          gh release create latest --title "מאגר הספרים המותאמים לתוכנת אוצריא" --notes-file release_notes.md --target main || \
+          gh release edit latest --title "מאגר הספרים המותאמים לתוכנת אוצריא" --notes-file release_notes.md
+
+          # 4. העלאת קבצים אחד אחד כדי למנוע קריסה של ה-API בגלל עברית
+          for file in *.zip; do
+            echo "מעלה קובץ: $file..."
+            gh release upload latest "$file" --clobber || echo "נכשל בהעלאת $file, ממשיך הלאה..."
+          done
