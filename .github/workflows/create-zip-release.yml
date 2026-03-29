@@ -14,90 +14,152 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build ZIPs
+      # תיקון 1: הגדרת locale לתמיכה מלאה בעברית/UTF-8
+      - name: Set UTF-8 locale
         run: |
-          # ניקוי תיקיות כדי למנוע שאריות מהרצות קודמות
+          sudo locale-gen en_US.UTF-8
+          echo "LANG=en_US.UTF-8" >> $GITHUB_ENV
+          echo "LC_ALL=en_US.UTF-8" >> $GITHUB_ENV
+
+      - name: Build ZIPs
+        # תיקון 2: set -euo pipefail — כל שגיאה תעצור את הריצה
+        run: |
+          set -euo pipefail
+          export LANG=en_US.UTF-8
+          export LC_ALL=en_US.UTF-8
+          
           rm -rf dist
           mkdir -p dist
           
           if [ -d "ספרים" ]; then
             cd "ספרים"
-            # לולאה שעוברת רק על תיקיות
             for d in */; do
               [ -e "$d" ] || continue
               name="${d%/}"
-              # יצירת הזיפ - מרכאות סביב השם כדי לטפל ברווחים ועברית
-              zip -r -9 "../dist/${name}.zip" "$d"
+              
+              # תיקון 3: שם קובץ ה-ZIP נשמר גם בעברית (לתצוגה) וגם כ-safe ASCII (להעלאה)
+              # יצירת שם בטוח: מחליפים תווים לא-ASCII בקוד hex
+              safe_name=$(echo "$name" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || echo "book_${RANDOM}")
+              # אם iconv לא עזר (עברית לא ניתנת לtranslit), משתמשים ב-md5
+              if echo "$safe_name" | grep -qP '[^\x20-\x7E]'; then
+                safe_name="book_$(echo "$name" | md5sum | cut -c1-8)"
+              fi
+
+              echo "Zipping: '$name' -> '${safe_name}.zip'"
+              zip -r -9 "../dist/${safe_name}.zip" "$d"
+              
+              # שמירת מיפוי שם-עברי <-> שם-zip לשימוש בהמשך
+              echo "${safe_name}.zip=${name}" >> "../dist/manifest.txt"
             done
             cd ..
+          else
+            echo "ERROR: Directory 'ספרים' not found!"
+            exit 1
           fi
+          
+          echo "=== Files in dist: ==="
+          ls -lh dist/
 
       - name: Create Release
         id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "אוטומציה סופית"
+          
+          # תיקון 4: notes בקובץ נפרד כדי למנוע בעיות encoding בשורת הפקודה
+          echo "עדכון אוטומטי של המאגר" > /tmp/release_notes.txt
+          
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --notes-file /tmp/release_notes.txt
+          
+          # תיקון 5: TAG מועבר במפורש דרך GITHUB_ENV
           echo "TAG=$TAG" >> $GITHUB_ENV
 
-      - name: Upload Assets (Aggressive Overwrite)
+      - name: Upload Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          # תיקון 6: TAG מועבר במפורש לבלוק env של השלב הזה
+          TAG: ${{ env.TAG }}
         run: |
-          python3 - <<EOF
-          import os, requests, urllib.parse, time
-          
+          python3 - <<'EOF'
+          import os, requests, time, sys
+
           token = os.getenv("GITHUB_TOKEN")
-          repo = os.getenv("REPO")
-          tag = os.getenv("TAG")
+          repo  = os.getenv("REPO")
+          tag   = os.getenv("TAG")
+
+          # תיקון 7: בדיקת משתנים לפני שמתחילים
+          for var_name, val in [("GITHUB_TOKEN", token), ("REPO", repo), ("TAG", tag)]:
+              if not val:
+                  print(f"ERROR: {var_name} is not set!")
+                  sys.exit(1)
+
           headers = {
               "Authorization": f"token {token}",
               "Accept": "application/vnd.github.v3+json"
           }
-          
-          # 1. המתנה קצרה לסנכרון השרתים של GitHub
+
           time.sleep(5)
-          
-          # 2. קבלת פרטי ה-Release
+
           release_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
           r = requests.get(release_url, headers=headers)
           r.raise_for_status()
-          release_data = r.json()
-          release_id = release_data["id"]
-          
-          # 3. העלאת קבצים מתיקיית dist
-          for fname in os.listdir("dist"):
-              if not fname.endswith(".zip"): continue
+          release_id = r.json()["id"]
+          print(f"Release ID: {release_id}")
+
+          dist_files = [f for f in os.listdir("dist") if f.endswith(".zip")]
+          if not dist_files:
+              print("ERROR: No ZIP files found in dist/")
+              sys.exit(1)
+
+          failed = []
+          for fname in dist_files:
               fpath = os.path.join("dist", fname)
-              
-              # בדיקה אם הנכס כבר קיים (למקרה של כפילות בתוך התיקייה או הרצה חוזרת)
-              # אנחנו מושכים את הרשימה המעודכנת בכל פעם
-              assets_r = requests.get(f"https://api.github.com/repos/{repo}/releases/{release_id}/assets", headers=headers)
-              existing_assets = {a["name"]: a["id"] for a in assets_r.json()}
-              
-              if fname in existing_assets:
-                  print(f"Asset {fname} exists. Deleting...")
-                  del_url = f"https://api.github.com/repos/{repo}/releases/assets/{existing_assets[fname]}"
-                  requests.delete(del_url, headers=headers)
-                  time.sleep(1) # מנוחה קלה בין מחיקה להעלאה
-              
-              # העלאה עם קידוד URL תקני לעברית
-              encoded_name = urllib.parse.quote(fname)
-              upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={encoded_name}"
-              
-              print(f"Uploading {fname}...")
-              with open(fpath, "rb") as f:
-                  u_headers = {
-                      "Authorization": f"token {token}",
-                      "Content-Type": "application/zip"
-                  }
-                  u_r = requests.post(upload_url, data=f, headers=u_headers)
-                  if u_r.status_code != 201:
-                      print(f"Error uploading {fname}: {u_r.text}")
-                      # במקום לקרוס, נמשיך לקובץ הבא כדי לא לתקוע את הכל
-                      continue
-                      
-          print("Automation finished successfully.")
+
+              # מחיקת asset קיים אם צריך
+              assets_r = requests.get(
+                  f"https://api.github.com/repos/{repo}/releases/{release_id}/assets",
+                  headers=headers
+              )
+              assets_r.raise_for_status()
+              existing = {a["name"]: a["id"] for a in assets_r.json()}
+
+              if fname in existing:
+                  print(f"Deleting existing asset: {fname}")
+                  requests.delete(
+                      f"https://api.github.com/repos/{repo}/releases/assets/{existing[fname]}",
+                      headers=headers
+                  ).raise_for_status()
+                  time.sleep(1)
+
+              # תיקון 8: שם הקובץ הוא כבר ASCII — אין צורך ב-URL encoding מיוחד
+              upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={fname}"
+              print(f"Uploading: {fname} ({os.path.getsize(fpath):,} bytes)")
+
+              # תיקון 9: retry עד 3 פעמים במקרה של כשל זמני
+              for attempt in range(3):
+                  with open(fpath, "rb") as f:
+                      resp = requests.post(
+                          upload_url, data=f,
+                          headers={**headers, "Content-Type": "application/zip"},
+                          timeout=120
+                      )
+                  if resp.status_code == 201:
+                      print(f"  ✓ Uploaded successfully")
+                      break
+                  print(f"  Attempt {attempt+1} failed: {resp.status_code} {resp.text[:200]}")
+                  time.sleep(3)
+              else:
+                  print(f"  ✗ Failed after 3 attempts: {fname}")
+                  failed.append(fname)
+
+          if failed:
+              print(f"\nFailed uploads: {failed}")
+              sys.exit(1)
+
+          print("\nAll files uploaded successfully.")
           EOF
