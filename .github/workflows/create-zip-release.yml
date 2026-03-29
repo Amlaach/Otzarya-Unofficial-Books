@@ -2,48 +2,77 @@
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          TAG: ${{ env.TAG }}
         run: |
-          set -euo pipefail
+          TAG=$(cat $GITHUB_ENV | grep "^TAG=" | cut -d= -f2)
+          echo "TAG is: $TAG"
 
-          # 1. קבלת release_id (עם בדיקה שזה הצליח)
-          RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          python3 << 'PYEOF'
+          import os, requests, urllib.parse, time, sys
+
+          token = os.environ["GITHUB_TOKEN"]
+          repo  = os.environ["REPO"]
+
+          # קריאת TAG ישירות מ-GITHUB_ENV
+          tag = None
+          with open(os.environ["GITHUB_ENV"]) as f:
+              for line in f:
+                  if line.startswith("TAG="):
+                      tag = line.strip().split("=", 1)[1]
           
-          RELEASE_ID=$(echo "$RELEASE_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id', ''))")
+          if not tag:
+              print("ERROR: TAG not found!")
+              sys.exit(1)
+          
+          print(f"TAG: {tag}")
 
-          if [ -z "$RELEASE_ID" ]; then
-            echo "❌ שגיאה: לא הצלחתי למצוא את ה-Release ID. תגובת השרת:"
-            echo "$RELEASE_DATA"
-            exit 1
-          fi
+          headers = {
+              "Authorization": f"token {token}",
+              "Accept": "application/vnd.github.v3+json"
+          }
 
-          echo "Release ID: $RELEASE_ID"
+          # קבלת release id
+          r = requests.get(
+              f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+              headers=headers
+          )
+          r.raise_for_status()
+          release_id = r.json()["id"]
+          print(f"Release ID: {release_id}")
 
-          # 2. העלאת הקבצים
-          count=1
-          for f in dist/*.zip; do
-            [ -e "$f" ] || continue
-            
-            ORIGINAL_NAME=$(basename "$f")
-            SAFE_NAME="book_${count}.zip"
+          # העלאת קבצים
+          files = sorted([f for f in os.listdir("dist") if f.endswith(".zip")])
+          if not files:
+              print("ERROR: no zip files in dist/")
+              sys.exit(1)
 
-            # קידוד בטוח - מעבירים את המשתנה דרך env כדי למנוע בעיות גרשיים
-            ENCODED_LABEL=$(export N="$ORIGINAL_NAME"; python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['N']))")
-            ENCODED_NAME=$(export N="$SAFE_NAME"; python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['N']))")
+          for i, fname in enumerate(files, 1):
+              fpath = os.path.join("dist", fname)
+              safe_name  = f"book_{i}.zip"
+              label      = fname  # שם עברי מקורי
+              
+              encoded_name  = urllib.parse.quote(safe_name)
+              encoded_label = urllib.parse.quote(label)
+              upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={encoded_name}&label={encoded_label}"
 
-            UPLOAD_URL="https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}"
+              print(f"Uploading: {fname} as {safe_name}")
+              with open(fpath, "rb") as f:
+                  resp = requests.post(
+                      upload_url,
+                      data=f,
+                      headers={
+                          "Authorization": f"token {token}",
+                          "Content-Type": "application/zip",
+                          "Content-Length": str(os.path.getsize(fpath))
+                      },
+                      timeout=(10, None)
+                  )
+              if resp.status_code == 201:
+                  print(f"✓ {fname}")
+              else:
+                  print(f"✗ {fname}: {resp.status_code} {resp.text[:200]}")
+                  sys.exit(1)
+              
+              time.sleep(1)
 
-            echo "מעלה ($count): $ORIGINAL_NAME..."
-            
-            curl -s --fail \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/zip" \
-              --data-binary @"$f" \
-              "$UPLOAD_URL"
-
-            echo "✓ הועלה בהצלחה"
-            count=$((count + 1))
-          done
-
-          echo "✅ כל הקבצים הועלו בהצלחה"
+          print("✅ הושלם")
+          PYEOF
