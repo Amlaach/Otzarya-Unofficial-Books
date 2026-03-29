@@ -6,34 +6,44 @@
         run: |
           set -euo pipefail
 
-          # קבלת release_id
-          RELEASE_ID=$(curl -s \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/$REPO/releases/tags/$TAG" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          # 1. קבלת release_id (עם בדיקה שזה הצליח)
+          RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          
+          RELEASE_ID=$(echo "$RELEASE_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id', ''))")
+
+          if [ -z "$RELEASE_ID" ]; then
+            echo "❌ שגיאה: לא הצלחתי למצוא את ה-Release ID. תגובת השרת:"
+            echo "$RELEASE_DATA"
+            exit 1
+          fi
 
           echo "Release ID: $RELEASE_ID"
 
+          # 2. העלאת הקבצים
           count=1
           for f in dist/*.zip; do
+            [ -e "$f" ] || continue
+            
             ORIGINAL_NAME=$(basename "$f")
             SAFE_NAME="book_${count}.zip"
 
-            # קידוד URL בנפרד — פותר את בעיית ה-YAML
-            ENCODED_LABEL=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$ORIGINAL_NAME'))")
-            ENCODED_NAME=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$SAFE_NAME'))")
+            # קידוד בטוח - מעבירים את המשתנה דרך env כדי למנוע בעיות גרשיים
+            ENCODED_LABEL=$(export N="$ORIGINAL_NAME"; python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['N']))")
+            ENCODED_NAME=$(export N="$SAFE_NAME"; python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['N']))")
 
             UPLOAD_URL="https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}"
 
-            echo "מעלה: $ORIGINAL_NAME"
+            echo "מעלה ($count): $ORIGINAL_NAME..."
+            
             curl -s --fail \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/zip" \
               --data-binary @"$f" \
               "$UPLOAD_URL"
 
-            echo "✓ $ORIGINAL_NAME"
+            echo "✓ הועלה בהצלחה"
             count=$((count + 1))
           done
 
-          echo "✅ הושלם"
+          echo "✅ כל הקבצים הועלו בהצלחה"
