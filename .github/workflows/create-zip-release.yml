@@ -73,11 +73,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          count=1
 
           for f in dist/*.zip; do
-            echo "מעלה: $f"
-            gh release upload "${{ env.TAG }}" "$f" --clobber
-            echo "✓ הועלה: $(basename "$f")"
+            ORIGINAL_NAME=$(basename "$f")   # שם עברי: "בבא קמא.zip"
+            SAFE_NAME="book_${count}.zip"    # שם URL-בטוח: "book_1.zip"
+
+            echo "מעלה: $ORIGINAL_NAME בתור $SAFE_NAME"
+
+            gh release upload "${{ env.TAG }}" "$f" \
+              --name "$SAFE_NAME" \
+              --label "$ORIGINAL_NAME" \
+              --clobber
+
+            echo "✓ הועלה: $ORIGINAL_NAME"
+            count=$((count + 1))
           done
 
           echo "✅ כל הקבצים הועלו בהצלחה"
