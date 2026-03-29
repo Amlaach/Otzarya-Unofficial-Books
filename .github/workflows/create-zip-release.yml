@@ -10,7 +10,8 @@ jobs:
   package-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  # הרשאה חיונית ליצירת Release
+      pull-requests: read
 
     steps:
       - name: Checkout repository
@@ -27,14 +28,17 @@ jobs:
       - name: Zip Full Repository
         run: zip -r Full-Repository-Download.zip . -x "*.git*" -x "*.github*"
 
-      - name: Zip Each Category Separately
+      - name: Zip Categories and Individual Files
         run: |
           if [ -d "ספרים" ]; then
             cd ספרים
+            # אריזת תיקיות
             for d in */ ; do
               folder_name=$(basename "$d")
               zip -r "../${folder_name}.zip" "$d"
             done
+            # אריזת קבצים בודדים כדי למנוע חסימת 418
+            find . -maxdepth 1 -type f -name "*.txt" -exec zip "../קבצים_בודדים.zip" {} +
             cd ..
           fi
 
@@ -48,23 +52,15 @@ jobs:
             *.zip
           make_latest: true
           body: |
-            ### 📚 ברוכים הבאים למאגר הספרים של אוצריא
+            ### 📚 עדכון מאגר אוצריא
+            המאגר עודכן בהצלחה. כל הקבצים נארזו ב-ZIP למניעת חסימות.
             
-            בדף זה תוכלו להוריד את קבצי המאגר המעודכנים ביותר.
-            
-            **אפשרויות הורדה:**
-            1. **המאגר המלא:** הורידו את `Full-Repository-Download.zip`.
-            2. **חבילות ספציפיות:** ניתן להוריד קבצי ZIP נפרדים לפי קטגוריות.
-            
-            ---
-            **הערה למשתמשי נטפרי:** הורדת קבצי ה-ZIP מומלצת כדי למנוע חסימות 418.
-            
-            📅 **תאריך עדכון:** ${{ env.readable_date }}
+            📅 **תאריך:** ${{ env.readable_date }}
 
       - name: Cleanup Old Releases
         uses: dev-drprasad/delete-older-releases@v0.3.0
         with:
-          keep_latest: 2
+          keep_latest: 3 # נשמור 3 ליתר ביטחון
           delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
