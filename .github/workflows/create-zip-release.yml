@@ -2,73 +2,35 @@ name: Auto Zip and Release
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'ספרים/**'
-      - 'רשימת ספרים שיש במאגר כרגע'
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-release:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
+      - uses: actions/checkout@v4
 
-      - name: Prepare ZIP files
+      - name: Build
         run: |
           mkdir -p dist
-          # 1. יצירת הזיפ המלא (שם באנגלית למניעת שיבושים)
+          # איחוד כל התוכן לקובץ אחד גדול (780MB+)
           zip -r "dist/00_Full_Library_Collection.zip" "ספרים" "רשימת ספרים שיש במאגר כרגע"
-
-          # 2. יצירת זיפים נפרדים לתתי-תיקיות
-          find "ספרים" -maxdepth 1 -mindepth 1 -type d | while read -r dir; do
-            name=$(basename "$dir")
-            zip -r "dist/${name}.zip" "$dir"
-          done
           
-          # 3. העתקת קובץ הרשימה
-          cp "רשימת ספרים שיש במאגר כרגע" "dist/רשימת_ספרים_במאגר.txt"
+          # יצירת קבצים נפרדים לכל תיקייה
+          cd "ספרים"
+          for d in */; do
+            zip -r "../dist/${d%/}.zip" "$d"
+          done
 
-      - name: Get current date
-        id: date
-        run: echo "date=$(date +'%d/%m/%Y %H:%M')" >> $GITHUB_OUTPUT
-
-      - name: Delete Old Release
-        # מחיקת ה-Release הקיים וה-Tag כדי למנוע כפילויות ושגיאות 422
+      - name: Upload
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete latest --yes || true
-          git push --delete origin latest || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create New Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: latest
-          name: מאגר ספרים מותאם לאוצריא
-          files: dist/*
-          body: |
-            # מאגר ספרים מותאם לאוצריא
-            
-            **תאריך עדכון אחרון:** ${{ steps.date.outputs.date }}
-            
-            ---
-            ### 📥 הורדת המאגר המלא
-            ## ➔ [לחצו כאן להורדת כל המאגר המלא](https://github.com/${{ github.repository }}/releases/download/latest/00_Full_Library_Collection.zip)
-            
-            ---
-            ### 📄 רשימת הספרים
-            [צפייה ברשימת הספרים המלאה](https://github.com/${{ github.repository }}/releases/download/latest/רשימת_ספרים_במאגר.txt)
-            
-            ---
-            ### 📂 הורדת תיקיות בנפרד
-            כל התיקיות מופיעות כקבצי ZIP ברשימת ה-Assets למטה.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          gh release create latest dist/* \
+            --title "מאגר ספרים" \
+            --notes "עדכון: $(date +'%d/%m/%Y')" \
+            --overwrite
