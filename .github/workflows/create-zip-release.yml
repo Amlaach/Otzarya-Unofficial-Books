@@ -12,12 +12,15 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # חובה! מושך את כל הקבצים כדי שהנפח יהיה תקין (780MB)
 
-      - name: Build
+      - name: Build ZIP files
         run: |
           mkdir -p dist
-          # איחוד כל התוכן לקובץ אחד גדול (780MB+)
+          # יצירת הקובץ המלא
           zip -r "dist/00_Full_Library_Collection.zip" "ספרים" "רשימת ספרים שיש במאגר כרגע"
           
           # יצירת קבצים נפרדים לכל תיקייה
@@ -26,11 +29,14 @@ jobs:
             zip -r "../dist/${d%/}.zip" "$d"
           done
 
-      - name: Upload
+      - name: Upload to GitHub
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # מחיקת ה-Release הקודם כדי שלא יהיו שגיאות כפילות
+          gh release delete latest --yes --cleanup-tag || true
+          
+          # יצירת ה-Release מחדש עם כל הקבצים
           gh release create latest dist/* \
-            --title "מאגר ספרים" \
-            --notes "עדכון: $(date +'%d/%m/%Y')" \
-            --overwrite
+            --title "מאגר ספרים מותאם לאוצריא" \
+            --notes "עדכון אחרון: $(date +'%d/%m/%Y %H:%M')"
