@@ -1,54 +1,39 @@
-name: Zero-Downtime Release with Category Zips
+name: Generate Library Assets
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   package-and-release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Prepare Files
         run: |
-          # יצירת ה-ZIP המלא עם קידומת 00 כדי שיהיה ראשון
+          # יצירת המאגר המלא
           zip -r "00_Full-Repository-Download.zip" . -x "*.git*" -x "*.github*"
           
+          # יצירת זיפים לפי תיקיות
           if [ -d "ספרים" ]; then
             cd ספרים
             for d in */ ; do
               zip -r "../$(basename "$d").zip" "$d"
             done
+            # קבצים בודדים
             find . -maxdepth 1 -type f -name "*.txt" -exec zip "../קבצים_בודדים.zip" {} +
           fi
 
-      - name: Release
+      - name: Fresh Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: rel-${{ github.run_id }}
-          name: "עדכון מאגר: $(date +'%d/%m/%Y %H:%M')"
+          tag_name: latest
+          name: "Library Update"
           files: "*.zip"
           make_latest: true
-          body: |
-            # מאגר הספרים המותאמים לתוכנת אוצריא:
-            # מאגר הספרים המותאמים לתוכנת אוצריא
-            
-            ### בדף זה תוכלו להוריד את קבצי המאגר המעודכנים ביותר. הגרסה נוצרת באופן אוטומטי בכל פעם שמתווספים ספרים חדשים.
-            
-            ---
-            ## אפשרויות הורדה
-            
-            <small>זמן ריצה: $(date +'%d/%m/%Y %H:%M')</small>
-
-      - name: Cleanup Old Releases
-        uses: dev-drprasad/delete-older-releases@v0.3.0
-        with:
-          keep_latest: 2
-          delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
