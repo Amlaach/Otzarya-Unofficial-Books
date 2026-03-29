@@ -6,7 +6,7 @@
         run: |
           set -euo pipefail
 
-          # קבלת release_id לפי TAG
+          # קבלת release_id
           RELEASE_ID=$(curl -s \
             -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/repos/$REPO/releases/tags/$TAG" \
@@ -19,16 +19,21 @@
             ORIGINAL_NAME=$(basename "$f")
             SAFE_NAME="book_${count}.zip"
 
-            echo "מעלה: $ORIGINAL_NAME בתור $SAFE_NAME (label: $ORIGINAL_NAME)"
+            # קידוד URL בנפרד — פותר את בעיית ה-YAML
+            ENCODED_LABEL=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$ORIGINAL_NAME'))")
+            ENCODED_NAME=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$SAFE_NAME'))")
 
+            UPLOAD_URL="https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}"
+
+            echo "מעלה: $ORIGINAL_NAME"
             curl -s --fail \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/zip" \
               --data-binary @"$f" \
-              "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$SAFE_NAME")&label=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$ORIGINAL_NAME")"
+              "$UPLOAD_URL"
 
-            echo "✓ הועלה: $ORIGINAL_NAME"
+            echo "✓ $ORIGINAL_NAME"
             count=$((count + 1))
           done
 
-          echo "✅ כל הקבצים הועלו בהצלחה"
+          echo "✅ הושלם"
