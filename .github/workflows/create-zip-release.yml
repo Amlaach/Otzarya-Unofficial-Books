@@ -1,20 +1,4 @@
-name: Auto Zip and Release
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build ZIPs
+- name: Build ZIPs
         run: |
           set -euo pipefail
           rm -rf dist
@@ -25,6 +9,12 @@ jobs:
             exit 1
           fi
 
+          # ✅ חדש: ZIP של כל המאגר - תמיד בשם קבוע
+          echo "→ יוצר ZIP של כל המאגר..."
+          zip -r -9 "dist/full-library.zip" "ספרים/"
+          echo "✅ full-library.zip נוצר"
+
+          # ZIP נפרד לכל ספר
           cd "ספרים"
           count=0
           for d in */; do
@@ -40,20 +30,7 @@ jobs:
             echo "❌ שגיאה: לא נמצאו תיקיות בתוך 'ספרים'!"
             exit 1
           fi
-          echo "✅ נוצרו $count קבצי ZIP"
-
-      - name: Create Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="v$(date +'%Y%m%d-%H%M%S')"
-
-          gh release create "$TAG" \
-            --title "עדכון מאגר $TAG" \
-            --notes "עדכון אוטומטי של הספרייה"
-
-          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "✅ נוצרו $count קבצי ZIP + אחד כולל"
 
       - name: Upload Assets
         env:
@@ -70,40 +47,58 @@ jobs:
 
           if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "None" ]; then
             echo "❌ לא הצלחתי למצוא את ה-Release ID"
-            echo "תגובת השרת: $RELEASE_DATA"
             exit 1
           fi
-
           echo "Release ID: $RELEASE_ID"
 
+          # ✅ העלאת המאגר המלא ראשון - בשם קבוע לקישור קבוע
+          echo "מעלה: full-library.zip (מאגר מלא)..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/zip" \
+            --data-binary @"dist/full-library.zip" \
+            "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=full-library.zip&label=📚 המאגר המלא")
+
+          if [ "$HTTP_CODE" -ne 201 ]; then
+            echo "❌ שגיאה בהעלאת full-library.zip (קוד: $HTTP_CODE)"
+            exit 1
+          fi
+          echo "✅ full-library.zip הועלה"
+
+          # העלאת ספרים בודדים
           count=1
           for f in dist/*.zip; do
             [ -e "$f" ] || continue
-
             ORIGINAL_NAME=$(basename "$f")
+
+            # דילוג על המאגר המלא - כבר הועלה
+            [ "$ORIGINAL_NAME" = "full-library.zip" ] && continue
+
             SAFE_NAME="book_${count}.zip"
-
-            # ✅ התיקון: המשתנה לפני הפקודה
-            ENCODED_LABEL=$(N="$ORIGINAL_NAME" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['N']))")
-            ENCODED_NAME=$(N="$SAFE_NAME"      python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['N']))")
-
-            UPLOAD_URL="https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}"
+            ENCODED_LABEL=$(N="$ORIGINAL_NAME" python3 -c "import urllib.parse,os; print(urllib.parse.quote(os.environ['N']))")
+            ENCODED_NAME=$(N="$SAFE_NAME"      python3 -c "import urllib.parse,os; print(urllib.parse.quote(os.environ['N']))")
 
             echo "מעלה: $ORIGINAL_NAME (בתור $SAFE_NAME)..."
-
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/zip" \
               --data-binary @"$f" \
-              "$UPLOAD_URL")
+              "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}")
 
             if [ "$HTTP_CODE" -ne 201 ]; then
-              echo "❌ שגיאה בהעלאת $ORIGINAL_NAME (קוד HTTP: $HTTP_CODE)"
+              echo "❌ שגיאה בהעלאת $ORIGINAL_NAME (קוד: $HTTP_CODE)"
               exit 1
             fi
-
-            echo "✓ הושלם: $ORIGINAL_NAME"
+            echo "✅ $ORIGINAL_NAME"
             count=$((count + 1))
           done
 
           echo "✅ כל הקבצים הועלו בהצלחה!"
+          echo ""
+          echo "🔗 קישור קבוע למאגר המלא:"
+          echo "https://github.com/$REPO/releases/latest/download/full-library.zip"
+```
+
+**הקישור הקבוע שתמיד יעבוד:**
+```
+https://github.com/YairDaniel123/Otzarya-Library/releases/latest/download/full-library.zip
