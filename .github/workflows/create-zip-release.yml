@@ -30,29 +30,27 @@ jobs:
           mkdir -p dist
 
           if [ ! -d "ספרים" ]; then
-            echo "ERROR: Directory 'ספרים' not found!"
+            echo "ERROR: תיקיית 'ספרים' לא נמצאה!"
             exit 1
           fi
 
           cd "ספרים"
+          count=0
           for d in */; do
             [ -e "$d" ] || continue
             name="${d%/}"
-
-            # המרת שם לASCII בטוח
-            safe_name=$(echo "$name" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || true)
-            if [ -z "$safe_name" ] || echo "$safe_name" | grep -qP '[^\x20-\x7E]'; then
-              safe_name="book_$(echo "$name" | md5sum | cut -c1-8)"
-            fi
-            # החלפת רווחים במקף
-            safe_name=$(echo "$safe_name" | tr ' ' '-')
-
-            echo "Zipping: '$name' -> '${safe_name}.zip'"
-            zip -r -9 "../dist/${safe_name}.zip" "$d"
+            echo "→ יוצר ZIP: '${name}.zip'"
+            zip -r -9 "../dist/${name}.zip" "$d"
+            count=$((count + 1))
           done
           cd ..
 
-          echo "=== Files in dist ==="
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: לא נמצאו תיקיות בתוך 'ספרים'!"
+            exit 1
+          fi
+
+          echo "=== נוצרו $count קבצי ZIP ==="
           ls -lh dist/
 
       - name: Create Release
@@ -61,11 +59,12 @@ jobs:
         run: |
           set -euo pipefail
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          echo "Release $TAG" > /tmp/release_notes.txt
+          printf "עדכון אוטומטי %s\n\nספרים שעודכנו:\n" "$TAG" > /tmp/notes.txt
+          ls dist/*.zip | xargs -I{} basename {} .zip >> /tmp/notes.txt
 
           gh release create "$TAG" \
             --title "Release $TAG" \
-            --notes-file /tmp/release_notes.txt
+            --notes-file /tmp/notes.txt
 
           echo "TAG=$TAG" >> $GITHUB_ENV
 
@@ -76,8 +75,9 @@ jobs:
           set -euo pipefail
 
           for f in dist/*.zip; do
-            echo "Uploading $f..."
+            echo "מעלה: $f"
             gh release upload "${{ env.TAG }}" "$f" --clobber
+            echo "✓ הועלה: $(basename "$f")"
           done
 
-          echo "Done."
+          echo "✅ כל הקבצים הועלו בהצלחה"
