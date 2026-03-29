@@ -1,4 +1,4 @@
-name: Auto Zip and Release
+name: Auto Zip and Release (Final Stable)
 
 on:
   push:
@@ -14,80 +14,62 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set UTF-8 locale
-        run: |
-          sudo locale-gen en_US.UTF-8
-          echo "LANG=en_US.UTF-8" >> $GITHUB_ENV
-          echo "LC_ALL=en_US.UTF-8" >> $GITHUB_ENV
-
       - name: Build ZIPs
         run: |
-          set -euo pipefail
-          export LANG=en_US.UTF-8
-          export LC_ALL=en_US.UTF-8
-
-          rm -rf dist
           mkdir -p dist
-
-          if [ ! -d "ספרים" ]; then
-            echo "ERROR: תיקיית 'ספרים' לא נמצאה!"
-            exit 1
+          if [ -d "ספרים" ]; then
+            cd "ספרים"
+            for d in */; do
+              [ -e "$d" ] || continue
+              name="${d%/}"
+              zip -r -9 "../dist/${name}.zip" "$d"
+            done
           fi
-
-          cd "ספרים"
-          count=0
-          for d in */; do
-            [ -e "$d" ] || continue
-            name="${d%/}"
-            echo "→ יוצר ZIP: '${name}.zip'"
-            zip -r -9 "../dist/${name}.zip" "$d"
-            count=$((count + 1))
-          done
-          cd ..
-
-          if [ "$count" -eq 0 ]; then
-            echo "ERROR: לא נמצאו תיקיות בתוך 'ספרים'!"
-            exit 1
-          fi
-
-          echo "=== נוצרו $count קבצי ZIP ==="
-          ls -lh dist/
 
       - name: Create Release
+        id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          printf "עדכון אוטומטי %s\n\nספרים שעודכנו:\n" "$TAG" > /tmp/notes.txt
-          ls dist/*.zip | xargs -I{} basename {} .zip >> /tmp/notes.txt
-
-          gh release create "$TAG" \
-            --title "Release $TAG" \
-            --notes-file /tmp/notes.txt
-
+          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "אוטומציה"
           echo "TAG=$TAG" >> $GITHUB_ENV
 
-      - name: Upload Assets
+      - name: Upload Assets (Safe Python Upload)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
-          count=1
-
-          for f in dist/*.zip; do
-            ORIGINAL_NAME=$(basename "$f")   # שם עברי: "בבא קמא.zip"
-            SAFE_NAME="book_${count}.zip"    # שם URL-בטוח: "book_1.zip"
-
-            echo "מעלה: $ORIGINAL_NAME בתור $SAFE_NAME"
-
-            gh release upload "${{ env.TAG }}" "$f" \
-              --name "$SAFE_NAME" \
-              --label "$ORIGINAL_NAME" \
-              --clobber
-
-            echo "✓ הועלה: $ORIGINAL_NAME"
-            count=$((count + 1))
-          done
-
-          echo "✅ כל הקבצים הועלו בהצלחה"
+          python3 - <<EOF
+          import os, requests, urllib.parse, time
+          
+          token = os.getenv("GITHUB_TOKEN")
+          repo = os.getenv("REPO")
+          tag = os.getenv("TAG")
+          headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+          
+          # קבלת ה-ID של ה-Release שנוצר
+          time.sleep(2)
+          release_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+          release_id = requests.get(release_url, headers=headers).json()["id"]
+          
+          count = 1
+          for fname in os.listdir("dist"):
+              if not fname.endswith(".zip"): continue
+              
+              # הגדרת שמות: שם טכני ל-URL ותווית בעברית לתצוגה
+              safe_name = f"book_{count}.zip"
+              label = fname # השם המקורי בעברית
+              
+              print(f"Uploading {label} as {safe_name}...")
+              
+              upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets"
+              params = {"name": safe_name, "label": label}
+              
+              with open(os.path.join("dist", fname), "rb") as f:
+                  u_headers = {"Authorization": f"token {token}", "Content-Type": "application/zip"}
+                  r = requests.post(upload_url, params=params, data=f, headers=u_headers)
+                  if r.status_code != 201:
+                      print(f"Error: {r.text}")
+              count += 1
+          EOF
