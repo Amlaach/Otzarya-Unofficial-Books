@@ -1,4 +1,4 @@
-name: Auto Zip and Release (Stable Full Lib)
+name: Auto Zip and Release
 
 on:
   push:
@@ -14,33 +14,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set UTF-8 locale
+        run: |
+          sudo locale-gen en_US.UTF-8
+          echo "LANG=en_US.UTF-8" >> $GITHUB_ENV
+          echo "LC_ALL=en_US.UTF-8" >> $GITHUB_ENV
+
       - name: Build ZIPs
         run: |
           set -euo pipefail
-          rm -rf dist && mkdir -p dist
+          export LANG=en_US.UTF-8
+          export LC_ALL=en_US.UTF-8
 
-          # 1. יצירת ZIP של כל המאגר (שם אנגלי קבוע לקישור קבוע)
+          rm -rf dist
+          mkdir -p dist
+
+          if [ ! -d "ספרים" ]; then
+            echo "❌ שגיאה: תיקיית 'ספרים' לא נמצאה!"
+            exit 1
+          fi
+
+          # ZIP של כל המאגר - שם קבוע לקישור קבוע
           echo "→ יוצר ZIP של כל המאגר..."
-          zip -r -9 "dist/full-library.zip" "ספרים/"
+          cd "ספרים"
+          zip -r -9 "../dist/full-library.zip" .
+          cd ..
+          echo "✅ full-library.zip נוצר"
 
-          # 2. יצירת ZIP נפרד לכל ספר
+          # ZIP נפרד לכל ספר - תוכן בלבד, ללא תיקייה עוטפת
           cd "ספרים"
           count=0
           for d in */; do
             [ -e "$d" ] || continue
             name="${d%/}"
-            zip -r -9 "../dist/${name}.zip" "$d"
+            echo "→ יוצר ZIP: '${name}.zip'"
+            cd "$d"
+            zip -r -9 "../../dist/${name}.zip" .
+            cd ..
             count=$((count + 1))
           done
-          echo "✅ נוצרו $count ספרים + מאגר מלא"
+          cd ..
+
+          if [ "$count" -eq 0 ]; then
+            echo "❌ שגיאה: לא נמצאו תיקיות בתוך 'ספרים'!"
+            exit 1
+          fi
+          echo "✅ נוצרו $count קבצי ZIP + מאגר מלא"
+          ls -lh dist/
 
       - name: Create Release
-        id: create_rel
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "אוטומציה"
+
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --notes "עדכון אוטומטי של הספרייה"
+
           echo "TAG=$TAG" >> $GITHUB_ENV
 
       - name: Upload Assets
@@ -50,36 +82,68 @@ jobs:
         run: |
           set -euo pipefail
 
-          # קבלת ה-ID של ה-Release
-          RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/$REPO/releases/tags/${{ env.TAG }}")
-          RELEASE_ID=$(echo "$RELEASE_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id', ''))")
+          # קריאת TAG מ-GITHUB_ENV ישירות (פותר בעיות העברה בין שלבים)
+          TAG=$(grep "^TAG=" "$GITHUB_ENV" | cut -d= -f2)
+          echo "TAG: $TAG"
 
-          # א. העלאת המאגר המלא (שם אנגלי, תווית עברית)
-          echo "מעלה מאגר מלא..."
-          LABEL_FULL=$(python3 -c "import urllib.parse; print(urllib.parse.quote('📚 המאגר המלא.zip'))")
-          curl -s -o /dev/null -w "%{http_code}" -X POST \
+          # קבלת Release ID
+          RELEASE_DATA=$(curl -s \
             -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Content-Type: application/zip" \
-            --data-binary @"dist/full-library.zip" \
-            "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=full-library.zip&label=$LABEL_FULL"
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
 
-          # ב. העלאת ספרים בודדים
-          count=1
-          for f in dist/*.zip; do
-            ORIGINAL_NAME=$(basename "$f")
-            [ "$ORIGINAL_NAME" = "full-library.zip" ] && continue
-            
-            SAFE_NAME="book_${count}.zip"
-            # קידוד השם המקורי (עברית) לתוך ה-Label
-            ENCODED_LABEL=$(N="$ORIGINAL_NAME" python3 -c "import urllib.parse,os; print(urllib.parse.quote(os.environ['N']))")
-            
-            echo "מעלה: $ORIGINAL_NAME..."
-            curl -s -o /dev/null -w "%{http_code}" -X POST \
+          RELEASE_ID=$(echo "$RELEASE_DATA" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          rid = d.get('id', '')
+          print(rid)
+          ")
+
+          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "None" ]; then
+            echo "❌ לא הצלחתי למצוא את ה-Release ID"
+            echo "תגובת השרת: $RELEASE_DATA"
+            exit 1
+          fi
+          echo "Release ID: $RELEASE_ID"
+
+          # פונקציית עזר להעלאה עם בדיקת תוצאה
+          upload_file() {
+            local fpath="$1"
+            local safe_name="$2"
+            local label="$3"
+
+            ENCODED_NAME=$(N="$safe_name" python3 -c "import urllib.parse,os; print(urllib.parse.quote(os.environ['N']))")
+            ENCODED_LABEL=$(N="$label" python3 -c "import urllib.parse,os; print(urllib.parse.quote(os.environ['N']))")
+
+            HTTP_CODE=$(curl -s -o /tmp/upload_resp.txt -w "%{http_code}" \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/zip" \
-              --data-binary @"$f" \
-              "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=$SAFE_NAME&label=$ENCODED_LABEL"
-            
+              --data-binary @"$fpath" \
+              "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}")
+
+            if [ "$HTTP_CODE" -ne 201 ]; then
+              echo "❌ שגיאה (קוד: $HTTP_CODE)"
+              cat /tmp/upload_resp.txt
+              exit 1
+            fi
+            echo "✅ הועלה: $label"
+          }
+
+          # 1. מאגר מלא - ראשון ברשימה, שם קבוע
+          echo "מעלה: full-library.zip..."
+          upload_file "dist/full-library.zip" "full-library.zip" "המאגר המלא"
+
+          # 2. ספרים בודדים
+          count=1
+          for f in dist/*.zip; do
+            [ -e "$f" ] || continue
+            ORIGINAL_NAME=$(basename "$f")
+            [ "$ORIGINAL_NAME" = "full-library.zip" ] && continue
+
+            echo "מעלה: $ORIGINAL_NAME..."
+            upload_file "$f" "book_${count}.zip" "$ORIGINAL_NAME"
             count=$((count + 1))
           done
+
+          echo ""
+          echo "✅ כל הקבצים הועלו בהצלחה!"
+          echo "🔗 קישור קבוע: https://github.com/$REPO/releases/latest/download/full-library.zip"
