@@ -21,7 +21,6 @@ jobs:
         run: |
           echo "file_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
           echo "display_date=$(date +'%d/%m/%Y %H:%M')" >> $GITHUB_OUTPUT
-          # יצירת שם הקובץ כמשתנה לשימוש חוזר בקישור
           echo "full_zip=00_כל-המאגר-להורדה_$(date +'%Y-%m-%d').zip" >> $GITHUB_OUTPUT
 
       - name: Prepare Files
@@ -29,7 +28,7 @@ jobs:
           # יצירת הארכיון המלא
           zip -r "${{ steps.vars.outputs.full_zip }}" . -x "*.git*" -x "*.github*" "*.zip"
           
-          # עיבוד תיקיות בתוך "ספרים"
+          # יצירת זיפים לתיקיות בתוך "ספרים"
           if [ -d "ספרים" ]; then
             cd "ספרים"
             for d in */ ; do
@@ -39,48 +38,38 @@ jobs:
             find . -maxdepth 1 -type f -name "*.txt" -exec zip "../קבצים_בודדים.zip" {} +
           fi
 
-      - name: Verify Files
-        run: |
-          if [ ! -f 00_*.zip ]; then
-            echo "::error::הקובץ המרכזי חסר!"
-            exit 1
-          fi
-
-      - name: Rotate Backup
+      - name: Create and Upload Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 1. ניהול סבב גרסאות (מחיקת גיבוי ישן והעברת הנוכחי לגיבוי)
           gh release delete backup-version --yes --cleanup-tag || true
           gh release edit latest --tag backup-version --title "גיבוי גרסה קודמת" || true
+          
+          # 2. יצירת גוף ההודעה לקובץ זמני (כדי למנוע בעיות תווים בטרמינל)
+          cat <<EOF > release_notes.md
+          # מאגר הספרים המותאמים לתוכנת אוצריא
+          
+          ### בדף זה תוכלו להוריד את קבצי המאגר המעודכנים ביותר. הגרסה נוצרת באופן אוטומטי בכל פעם שמתווספים ספרים חדשים.
+          
+          ---
+          ## 📥 אפשרויות הורדה:
+          
+          ### 📦 המאגר המלא (מומלץ)
+          **לחצו כאן להורדה ישירה:** ## [⬇️ ${{ steps.vars.outputs.full_zip }}](https://github.com/${{ github.repository }}/releases/download/latest/${{ steps.vars.outputs.full_zip }})
+          
+          *זהו קובץ המכיל את כל הספרים והתיקיות במבנה הנדרש לתוכנה.*
+          
+          ---
+          ### 📂 הורדה לפי קטגוריות
+          להלן הקבצים המחולקים לפי נושאים כפי שהם מופיעים בתיקיות המאגר. רשימת הקבצים המלאה מופיעה מטה.
+          
+          ---
+          **תאריך עדכון אחרון:** ${{ steps.vars.outputs.display_date }}
+          EOF
 
-      - name: Create Fresh Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          # שורה ראשונה בגדול (הכותרת של ה-Release)
-          name: "מאגר הספרים המותאמים לתוכנת אוצריא"
-          body: |
-            # מאגר הספרים המותאמים לתוכנת אוצריא
-            
-            ### בדף זה תוכלו להוריד את קבצי המאגר המעודכנים ביותר. הגרסה נוצרת באופן אוטומטי בכל פעם שמתווספים ספרים חדשים.
-            
-            ---
-            ## 📥 אפשרויות הורדה:
-            
-            ### 📦 המאגר המלא (מומלץ)
-            **לחצו כאן להורדה ישירה:** ## [⬇️ ${{ steps.vars.outputs.full_zip }}](https://github.com/${{ github.repository }}/releases/download/latest/${{ steps.vars.outputs.full_zip }})
-            
-            *זהו קובץ המכיל את כל הספרים והתיקיות במבנה הנדרש לתוכנה.*
-            
-            ---
-            ### 📂 הורדה לפי קטגוריות
-            להלן הקבצים המחולקים לפי נושאים כפי שהם מופיעים בתיקיות המאגר:
-            
-            *(רשימת הקבצים המלאה מופיעה מטה תחת Assets)*
-            
-            ---
-            **תאריך עדכון אחרון:** `${{ steps.vars.outputs.display_date }}`
-          files: "*.zip"
-          make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 3. יצירת ה-Release החדש והעלאת כל קבצי ה-ZIP
+          gh release create latest *.zip \
+            --title "מאגר הספרים המותאמים לתוכנת אוצריא" \
+            --notes-file release_notes.md \
+            --target main
