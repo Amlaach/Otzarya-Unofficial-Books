@@ -1,4 +1,4 @@
-name: Auto Zip and Release (Fixed)
+name: Auto Zip and Release (Hebrew Support)
 
 on:
   push:
@@ -17,22 +17,35 @@ jobs:
       - name: Build ZIPs
         run: |
           mkdir -p dist
-          # זיפ לכל תיקייה בנפרד
           if [ -d "ספרים" ]; then
-            cd ספרים
+            cd "ספרים"
+            # לולאה שעוברת על התיקיות בצורה בטוחה
             for d in */; do
+              [ -e "$d" ] || continue
               name="${d%/}"
-              # הסרת תווים בעייתיים משם הקובץ למניעת שגיאות 422
-              safe_name=$(echo "$name" | tr -d ' ' | tr -cd '[:alnum:]_א-ת')
+              # ניקוי רווחים בלבד, שמירה על עברית
+              safe_name=$(echo "$name" | tr -d ' ')
               zip -r -9 "../dist/${safe_name}.zip" "$d"
             done
             cd ..
           fi
-          
-      - name: Create Release
+
+      - name: Create Release and Upload Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          # שימוש ב-gh release עם דריסה אם קיים (למרות שה-TAG ייחודי)
-          gh release create "$TAG" dist/*.zip --title "מאגר ספרים $TAG" --notes "עדכון אוטומטי"
+          
+          # 1. יצירת ה-Release תחילה (ללא קבצים)
+          gh release create "$TAG" \
+            --title "עדכון מאגר $TAG" \
+            --notes "העלאה אוטומטית"
+          
+          # 2. העלאת כל הקבצים מתיקיית dist
+          # ה-CLI של GitHub (gh) יודע לטפל בקידוד עברית טוב יותר כשהוא מעלה קבצים קיימים
+          if ls dist/*.zip 1> /dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.zip --clobber
+          else
+            echo "No zip files found!"
+            exit 1
+          fi
