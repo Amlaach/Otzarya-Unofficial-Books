@@ -1,4 +1,4 @@
-name: Auto Zip and Release (Hebrew Supported)
+name: Auto Zip and Release (Fixed)
 
 on:
   push:
@@ -19,39 +19,31 @@ jobs:
           mkdir -p dist
           if [ -d "ספרים" ]; then
             cd "ספרים"
-            # לולאה שעוברת על התיקיות
             for d in */; do
               [ -e "$d" ] || continue
               name="${d%/}"
-              # הסרת רווחים בלבד לשם הקובץ הזמני
-              safe_name=$(echo "$name" | tr -d ' ')
-              zip -r -9 "../dist/${safe_name}.zip" "$d"
+              # יצירת זיפ עם השם המקורי בעברית בתוך תיקיית dist
+              zip -r -9 "../dist/${name}.zip" "$d"
             done
             cd ..
           fi
 
-      - name: Create Release and Upload Assets
+      - name: Create and Upload Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # יצירת תג ייחודי מבוסס זמן
           TAG="v$(date +'%Y%m%d-%H%M%S')"
           
-          echo "Creating release $TAG..."
-          gh release create "$TAG" \
-            --title "עדכון מאגר - $(date +'%d/%m/%Y')" \
-            --notes "העלאה אוטומטית של קבצים"
+          # יצירת ה-Release תחילה
+          gh release create "$TAG" --title "עדכון מאגר $TAG" --notes "עדכון אוטומטי"
 
-          # העלאת הקבצים אחד אחד עם שימוש ב-Label עבור העברית
+          # העלאת קבצים: שם טכני באנגלית (למניעת 404) ותווית בעברית (בשביל ה-Python)
           count=1
           for file in dist/*.zip; do
             if [ -f "$file" ]; then
               ORIGINAL_NAME=$(basename "$file")
-              echo "Uploading $ORIGINAL_NAME..."
+              echo "Uploading $ORIGINAL_NAME as archive_${count}.zip"
               
-              # העלאה: 
-              # --name: השם הטכני של הקובץ (באנגלית/מספר) כדי למנוע 404
-              # --label: השם שיוצג למשתמש (תומך בעברית)
               gh release upload "$TAG" "$file" \
                 --name "archive_${count}.zip" \
                 --label "$ORIGINAL_NAME" \
