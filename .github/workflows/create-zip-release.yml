@@ -18,7 +18,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          lfs: true # משיכת קבצי ה-PDF המלאים מ-Git LFS
+          lfs: true
 
       - name: Build ZIPs
         run: |
@@ -27,7 +27,7 @@ jobs:
           mkdir -p dist
 
           if [ ! -d "ספרים" ]; then
-            echo "❌ תיקיית 'ספרים' לא נמצאה!"
+            echo "תיקיית 'ספרים' לא נמצאה!"
             exit 1
           fi
 
@@ -55,33 +55,32 @@ jobs:
         run: |
           set -euo pipefail
           
-          # עיצוב תאריך ושעה
           CURRENT_TIME=$(date +'%d.%m.%Y בשעה %H:%M')
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          
-          # קישור קבוע להורדה
           PERMALINK="https://github.com/${REPO}/releases/latest/download/full-library.zip"
           
-          # בניית גוף ההודעה ב-Markdown
           RELEASE_BODY=$(cat <<EOF
           # מאגר ספרים המותאם לאוצריא
-          ### קבצים אלו מתעדכנים באופן אוטומטי עם כל שינוי שנעשה בספרים
-          #### גירסה זו מעודכנת לתאריך: $CURRENT_TIME
+          
+          ### קבצים אלו מתעדכנים באופן אוטומטי עם כל שינוי שנעשה בספרים.
+          **גרסה מעודכנת לתאריך:** $CURRENT_TIME
           
           ---
           
-          ### [להורדת המאגר המלא (קישור קבוע) - לחץ כאן]($PERMALINK)
-          
-          > **שימו לב:** הקישור למעלה תמיד יוריד את הגרסה הכי מעודכנת של המאגר.
+          > [!IMPORTANT]
+          > ### להורדת המאגר המלא בקובץ אחד:
+          > [**לחץ כאן להורדה ישירה**]($PERMALINK)
           
           ---
-          **רשימת הספרים הבודדים להורדה:**
+          
+          ### רשימת קבצים בודדים להורדה
+          להלן הקבצים המרכיבים את המאגר בחלוקה לפי ספרים:
           EOF
           )
 
-          # יצירת ה-Release
+          # כותרת נקייה ללא אימוג'ים
           gh release create "$TAG" \
-            --title "מאגר ספרים מעודכן - $CURRENT_TIME" \
+            --title "עדכון מאגר ספרים" \
             --notes "$RELEASE_BODY" \
             --latest
             
@@ -95,7 +94,6 @@ jobs:
           set -euo pipefail
           TAG=${{ env.TAG }}
           
-          # שליפת מזהה ה-Release
           RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$REPO/releases/tags/$TAG")
           RELEASE_ID=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
 
@@ -103,11 +101,9 @@ jobs:
             local fpath="$1"
             local safe_name="$2"
             local label="$3"
-
             ENCODED_NAME=$(echo -n "$safe_name" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
             ENCODED_LABEL=$(echo -n "$label" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
 
-            echo "Uploading: $label..."
             curl -s -o /tmp/upload_resp.txt -w "%{http_code}" \
               -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
@@ -116,10 +112,8 @@ jobs:
               "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}"
           }
 
-          # המאגר המלא מועלה ראשון כדי שיופיע בראש הרשימה
           upload_file "dist/full-library.zip" "full-library.zip" "המאגר המלא - להורדה ישירה"
 
-          # העלאת יתר הספרים
           count=1
           for f in dist/*.zip; do
             [ -e "$f" ] || continue
@@ -134,16 +128,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "מנקה גרסאות ישנות (משאיר רק 2 אחרונות)..."
-          
-          # שליפה נקייה של טאגים בפורמט JSON כדי למנוע שגיאות "Not Found"
           OLD_RELEASES=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | tail -n +3)
           
-          if [ -z "$OLD_RELEASES" ]; then
-            echo "אין מספיק גרסאות ישנות למחיקה."
-          else
+          if [ -n "$OLD_RELEASES" ]; then
             for tag in $OLD_RELEASES; do
-              echo "מוחק את גרסה: $tag"
               gh release delete "$tag" --yes --cleanup-tag
             done
           fi
