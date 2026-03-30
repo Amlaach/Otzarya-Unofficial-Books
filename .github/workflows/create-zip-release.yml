@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true # הנה התיקון! מושך את קבצי ה-PDF האמיתיים ולא את קבצי ההצבעה
 
       - name: Build ZIPs
         run: |
@@ -31,7 +33,7 @@ jobs:
 
           # 1. ZIP של כל המאגר
           cd "ספרים"
-          zip -r -9 "../dist/full-library.zip" .
+          zip -r "../dist/full-library.zip" .
           cd ..
 
           # 2. ZIP נפרד לכל ספר
@@ -40,7 +42,7 @@ jobs:
             [ -e "$d" ] || continue
             name="${d%/}"
             cd "$d"
-            zip -r -9 "../../dist/${name}.zip" .
+            zip -r "../../dist/${name}.zip" .
             cd ..
           done
           cd ..
