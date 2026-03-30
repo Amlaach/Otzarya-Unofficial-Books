@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# הגדרה גלובלית ל"שגר ושכח" - מונע אזהרות Node.js עתידיות
+# הגדרה גלובלית ל"שגר ושכח"
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -25,31 +25,25 @@ jobs:
           mkdir -p dist
 
           if [ ! -d "ספרים" ]; then
-            echo "❌ שגיאה: תיקיית 'ספרים' לא נמצאה!"
+            echo "❌ תיקיית 'ספרים' לא נמצאה!"
             exit 1
           fi
 
-          # 1. ZIP של כל המאגר - תוכן בלבד (שם אנגלי קבוע לקישור קבוע)
-          echo "→ יוצר ZIP של כל המאגר..."
+          # 1. ZIP של כל המאגר
           cd "ספרים"
           zip -r -9 "../dist/full-library.zip" .
           cd ..
 
-          # 2. ZIP נפרד לכל ספר - תוכן בלבד
+          # 2. ZIP נפרד לכל ספר
           cd "ספרים"
-          count=0
           for d in */; do
             [ -e "$d" ] || continue
             name="${d%/}"
-            echo "→ יוצר ZIP עבור: $name"
             cd "$d"
             zip -r -9 "../../dist/${name}.zip" .
             cd ..
-            count=$((count + 1))
           done
           cd ..
-
-          echo "✅ נוצרו $count קבצי ZIP + מאגר מלא"
 
       - name: Create Release
         id: create_rel
@@ -58,9 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          gh release create "$TAG" \
-            --title "Release $TAG" \
-            --notes "עדכון אוטומטי של הספרייה"
+          gh release create "$TAG" --title "Release $TAG" --notes "עדכון אוטומטי"
           echo "TAG=$TAG" >> $GITHUB_ENV
 
       - name: Upload Assets
@@ -69,30 +61,19 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-
-          # שליפת ה-TAG וה-Release ID מהסביבה
           TAG=${{ env.TAG }}
-          RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
-          
+          RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$REPO/releases/tags/$TAG")
           RELEASE_ID=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
 
-          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "None" ]; then
-            echo "❌ שגיאה: לא נמצא Release ID"
-            exit 1
-          fi
-
-          # פונקציה להעלאת קובץ עם קידוד עברית בטוח דרך STDIN
           upload_file() {
             local fpath="$1"
             local safe_name="$2"
-            local label="$3"
+            local label="$3" # ללא אימוג'ים!
 
-            # קידוד השמות לעברית בצורה חסינה
             ENCODED_NAME=$(echo -n "$safe_name" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
             ENCODED_LABEL=$(echo -n "$label" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
 
-            echo "מעלה: $label..."
+            echo "Uploading: $label..."
             HTTP_CODE=$(curl -s -o /tmp/upload_resp.txt -w "%{http_code}" \
               -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
@@ -107,18 +88,15 @@ jobs:
             fi
           }
 
-          # 1. העלאת המאגר המלא (תווית בעברית, שם קובץ באנגלית לקישור קבוע)
-          upload_file "dist/full-library.zip" "full-library.zip" "📚 המאגר המלא"
+          # העלאת המאגר (טקסט עברי נקי - בלי אימוג'י ספר)
+          upload_file "dist/full-library.zip" "full-library.zip" "המאגר המלא"
 
-          # 2. העלאת ספרים בודדים
+          # העלאת ספרים בודדים
           count=1
           for f in dist/*.zip; do
             [ -e "$f" ] || continue
             ORIGINAL_NAME=$(basename "$f")
             [ "$ORIGINAL_NAME" = "full-library.zip" ] && continue
-
             upload_file "$f" "book_${count}.zip" "$ORIGINAL_NAME"
             count=$((count + 1))
           done
-
-          echo "✅ תהליך ההעלאה הסתיים בהצלחה!"
