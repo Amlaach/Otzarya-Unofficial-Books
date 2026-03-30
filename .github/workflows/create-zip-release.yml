@@ -5,7 +5,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# הגדרה גלובלית ל"שגר ושכח"
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -18,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true # הנה התיקון! מושך את קבצי ה-PDF האמיתיים ולא את קבצי ההצבעה
+          lfs: true
 
       - name: Build ZIPs
         run: |
@@ -51,10 +50,35 @@ jobs:
         id: create_rel
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          
+          CURRENT_TIME=$(date +'%d.%m.%Y בשעה %H:%M')
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          gh release create "$TAG" --title "Release $TAG" --notes "עדכון אוטומטי"
+          PERMALINK="https://github.com/${REPO}/releases/latest/download/full-library.zip"
+          
+          RELEASE_BODY=$(cat <<EOF
+          # מאגר ספרים המותאם לאוצריא
+          ### קבצים אלו מתעדכנים באופן אוטומטי עם כל שינוי שנעשה בספרים
+          #### גירסה זו מעודכנת לתאריך: $CURRENT_TIME
+          
+          ---
+          
+          ### [להורדת המאגר המלא (קישור קבוע) - לחץ כאן]($PERMALINK)
+          
+          > **שימו לב:** הקישור למעלה תמיד יוריד את הגרסה הכי מעודכנת של המאגר.
+          
+          ---
+          **רשימת הספרים הבודדים להורדה:**
+          EOF
+          )
+
+          gh release create "$TAG" \
+            --title "מאגר ספרים מעודכן - $CURRENT_TIME" \
+            --notes "$RELEASE_BODY" \
+            --latest
+            
           echo "TAG=$TAG" >> $GITHUB_ENV
 
       - name: Upload Assets
@@ -70,30 +94,20 @@ jobs:
           upload_file() {
             local fpath="$1"
             local safe_name="$2"
-            local label="$3" # ללא אימוג'ים!
-
+            local label="$3"
             ENCODED_NAME=$(echo -n "$safe_name" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
             ENCODED_LABEL=$(echo -n "$label" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
 
-            echo "Uploading: $label..."
-            HTTP_CODE=$(curl -s -o /tmp/upload_resp.txt -w "%{http_code}" \
+            curl -s -o /tmp/upload_resp.txt -w "%{http_code}" \
               -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/zip" \
               --data-binary @"$fpath" \
-              "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}")
-
-            if [ "$HTTP_CODE" -ne 201 ]; then
-              echo "❌ שגיאה בהעלאת $label (קוד: $HTTP_CODE)"
-              cat /tmp/upload_resp.txt
-              exit 1
-            fi
+              "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}"
           }
 
-          # העלאת המאגר (טקסט עברי נקי - בלי אימוג'י ספר)
-          upload_file "dist/full-library.zip" "full-library.zip" "המאגר המלא"
+          upload_file "dist/full-library.zip" "full-library.zip" "המאגר המלא - להורדה ישירה"
 
-          # העלאת ספרים בודדים
           count=1
           for f in dist/*.zip; do
             [ -e "$f" ] || continue
@@ -101,4 +115,19 @@ jobs:
             [ "$ORIGINAL_NAME" = "full-library.zip" ] && continue
             upload_file "$f" "book_${count}.zip" "$ORIGINAL_NAME"
             count=$((count + 1))
+          done
+
+      - name: Cleanup Old Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "מנקה גרסאות ישנות (משאיר רק 2 אחרונות)..."
+          
+          # קבלת רשימת כל ה-Tags של ה-Releases, מיון מהחדש לישן, ודילוג על ה-2 הראשונים
+          OLD_RELEASES=$(gh release list --limit 100 | awk '{print $1}' | tail -n +3)
+          
+          for tag in $OLD_RELEASES; do
+            echo "מוחק את גרסה: $tag"
+            gh release delete "$tag" --yes --cleanup-tag
           done
