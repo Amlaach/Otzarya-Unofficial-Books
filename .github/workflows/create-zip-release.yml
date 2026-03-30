@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# הגדרה גלובלית ל"שגר ושכח" - מונע אזהרות Node.js עתידיות
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: write
 
@@ -25,7 +29,7 @@ jobs:
             exit 1
           fi
 
-          # 1. ZIP של כל המאגר - תוכן בלבד
+          # 1. ZIP של כל המאגר - תוכן בלבד (שם אנגלי קבוע לקישור קבוע)
           echo "→ יוצר ZIP של כל המאגר..."
           cd "ספרים"
           zip -r -9 "../dist/full-library.zip" .
@@ -56,7 +60,7 @@ jobs:
           TAG="v$(date +'%Y%m%d-%H%M%S')"
           gh release create "$TAG" \
             --title "Release $TAG" \
-            --notes "עדכון אוטומטי"
+            --notes "עדכון אוטומטי של הספרייה"
           echo "TAG=$TAG" >> $GITHUB_ENV
 
       - name: Upload Assets
@@ -66,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # שליפת ה-TAG וה-Release ID
+          # שליפת ה-TAG וה-Release ID מהסביבה
           TAG=${{ env.TAG }}
           RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/repos/$REPO/releases/tags/$TAG")
@@ -78,13 +82,13 @@ jobs:
             exit 1
           fi
 
-          # פונקציה להעלאת קובץ עם קידוד עברית בטוח
+          # פונקציה להעלאת קובץ עם קידוד עברית בטוח דרך STDIN
           upload_file() {
             local fpath="$1"
             local safe_name="$2"
             local label="$3"
 
-            # העברת השם לעברית דרך sys.stdin.read כדי למנוע בעיות Locale
+            # קידוד השמות לעברית בצורה חסינה
             ENCODED_NAME=$(echo -n "$safe_name" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
             ENCODED_LABEL=$(echo -n "$label" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
 
@@ -97,16 +101,16 @@ jobs:
               "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}")
 
             if [ "$HTTP_CODE" -ne 201 ]; then
-              echo "❌ שגיאה בהעלאה (קוד: $HTTP_CODE)"
+              echo "❌ שגיאה בהעלאת $label (קוד: $HTTP_CODE)"
               cat /tmp/upload_resp.txt
               exit 1
             fi
           }
 
-          # העלאת המאגר המלא
-          upload_file "dist/full-library.zip" "full-library.zip" "המאגר המלא"
+          # 1. העלאת המאגר המלא (תווית בעברית, שם קובץ באנגלית לקישור קבוע)
+          upload_file "dist/full-library.zip" "full-library.zip" "📚 המאגר המלא"
 
-          # העלאת ספרים בודדים
+          # 2. העלאת ספרים בודדים
           count=1
           for f in dist/*.zip; do
             [ -e "$f" ] || continue
@@ -117,4 +121,4 @@ jobs:
             count=$((count + 1))
           done
 
-          echo "✅ הסתיים בהצלחה!"
+          echo "✅ תהליך ההעלאה הסתיים בהצלחה!"
