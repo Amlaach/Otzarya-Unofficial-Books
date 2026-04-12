@@ -1,5 +1,5 @@
 
-![8088d60b-949d-4de0-82a7-48453fec8811](https://github.com/user-attachments/assets/e607c590-f507-4901-a5a8-d1bb2b9d3aa9)
+|- ![Uploading a5cd01a2-a120-48b4-8dc1-9d73ac894e91.jpg…]() -|
 
 # OtzarLib
 מאגר ספרים מותאמים לתוכנת אוצריא
