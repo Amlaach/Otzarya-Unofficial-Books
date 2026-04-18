@@ -1,6 +1,4 @@
-![Uploading a5cd01a2-a120-48b4-8dc1-9d73ac894e91.jpg…]()
-
-|- ![Uploading a5cd01a2-a120-48b4-8dc1-9d73ac894e91.jpg…]() -|
+![Uploading 9f357efa-5666-4ae2-9952-3e1f8c21aef9.jpg…]()
 
 # OtzarLib
 מאגר ספרים מותאמים לתוכנת אוצריא
