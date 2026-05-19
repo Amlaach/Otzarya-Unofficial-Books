@@ -122,45 +122,42 @@ jobs:
           repo  = os.environ['REPO']
           tag   = os.environ['TAG']
 
-          # שליפת numeric release ID מה-REST API
+          # שליפת numeric release ID
           req = urllib.request.Request(
               f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
-              headers={'Authorization': f'token {token}', 'Accept': 'application/vnd.github+json'}
+              headers={'Authorization': f'token {token}',
+                       'Accept': 'application/vnd.github+json',
+                       'User-Agent': 'otzaria-uploader'}
           )
           with urllib.request.urlopen(req) as resp:
               release_id = json.loads(resp.read())['id']
+          print(f"Release ID: {release_id}", flush=True)
 
           def upload(fpath, fname, ctype='application/zip'):
+              print(f"Uploading: {fname}", flush=True)
               encoded = urllib.parse.quote(fname)
               url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={encoded}"
               r = subprocess.run([
-                  'curl', '-s', '-o', '/tmp/up.txt', '-w', '%{http_code}',
+                  'curl', '--fail-with-body', '-s',
                   '-X', 'POST',
                   '-H', f'Authorization: token {token}',
                   '-H', f'Content-Type: {ctype}',
                   '--data-binary', f'@{fpath}',
                   url
-              ], capture_output=True, text=True)
-              code = r.stdout.strip()
-              if code != '201':
-                  print(f'FAIL ({code}): {fname}', flush=True)
-                  with open('/tmp/up.txt') as f: print(f.read())
+              ])
+              if r.returncode != 0:
+                  print(f"FAIL: {fname}", flush=True)
                   sys.exit(1)
-              print(f'Uploaded: {fname}', flush=True)
+              print(f"Done: {fname}", flush=True)
 
-          # 1. המאגר המלא
           upload('dist/full-library.zip', 'full-library.zip')
-
-          # 2. manifest.json
           upload('dist/manifest.json', 'manifest.json', 'application/json')
 
-          # 3. תיקיות ראשיות (ללא __ בשם)
           top = sorted([f for f in os.listdir('dist')
                         if f.endswith('.zip') and '__' not in f and f != 'full-library.zip'])
           for fname in top:
               upload(f'dist/{fname}', fname)
 
-          # 4. תתי-תיקיות לפי עומק עולה
           sub = sorted([f for f in os.listdir('dist') if f.endswith('.zip') and '__' in f],
                        key=lambda f: (f.count('__'), f))
           for fname in sub:
