@@ -20,32 +20,78 @@ jobs:
         with:
           lfs: true
 
-      - name: Build ZIPs
+      - name: Build ZIPs and Manifest
         run: |
-          set -euo pipefail
-          rm -rf dist
-          mkdir -p dist
+          python3 - <<'PYEOF'
+          import os, json, zipfile
 
-          if [ ! -d "ספרים" ]; then
-            echo "תיקיית 'ספרים' לא נמצאה!"
-            exit 1
-          fi
+          os.makedirs('dist', exist_ok=True)
 
-          # 1. ZIP של כל המאגר
-          cd "ספרים"
-          zip -r "../dist/full-library.zip" .
-          cd ..
+          def fmt_size(b):
+              if b >= 1 << 30: return f"{b / (1 << 30):.1f} GB"
+              if b >= 1 << 20: return f"{b / (1 << 20):.1f} MB"
+              if b >= 1 << 10: return f"{b / (1 << 10):.0f} KB"
+              return f"{b} B"
 
-          # 2. ZIP נפרד לכל ספר
-          cd "ספרים"
-          for d in */; do
-            [ -e "$d" ] || continue
-            name="${d%/}"
-            cd "$d"
-            zip -r "../../dist/${name}.zip" .
-            cd ..
-          done
-          cd ..
+          def make_zip(src_dir, zip_path):
+              with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                  for dp, dns, fns in os.walk(src_dir):
+                      dns.sort()
+                      for fn in sorted(fns):
+                          fp = os.path.join(dp, fn)
+                          zf.write(fp, os.path.relpath(fp, src_dir))
+
+          def has_files(path):
+              return any(fns for _, _, fns in os.walk(path))
+
+          # ZIP של כל המאגר
+          make_zip('ספרים', 'dist/full-library.zip')
+          size = fmt_size(os.path.getsize('dist/full-library.zip'))
+          print(f"Created full-library.zip ({size})")
+
+          # אסוף את כל התיקיות, ממוינות לפי עומק ואז אלפבית
+          all_dirs = []
+          for root, dirs, files in os.walk('ספרים'):
+              dirs.sort()
+              if root == 'ספרים':
+                  continue
+              rel = os.path.relpath(root, 'ספרים').replace('\\', '/')
+              depth = rel.count('/')
+              all_dirs.append((depth, rel, root))
+
+          all_dirs.sort(key=lambda x: (x[0], x[1]))
+
+          manifest = []
+
+          for depth, rel, abs_path in all_dirs:
+              if not has_files(abs_path):
+                  print(f"Skipping empty: {rel}")
+                  continue
+
+              zip_name = rel.replace('/', '__').replace(' ', '_') + '.zip'
+              zip_path = os.path.join('dist', zip_name)
+
+              make_zip(abs_path, zip_path)
+              size_str = fmt_size(os.path.getsize(zip_path))
+              print(f"Created {zip_name} ({size_str})")
+
+              parts = rel.split('/')
+              parent = '/'.join(parts[:-1])
+
+              manifest.append({
+                  "name": os.path.basename(abs_path),
+                  "path": rel,
+                  "zip": zip_name,
+                  "parent": parent,
+                  "size": size_str,
+                  "depth": depth
+              })
+
+          with open('dist/manifest.json', 'w', encoding='utf-8') as f:
+              json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+          print(f"\nmanifest.json נוצר עם {len(manifest)} ערכים")
+          PYEOF
 
       - name: Create Release
         id: create_rel
@@ -54,36 +100,14 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          
           CURRENT_TIME=$(date +'%d.%m.%Y בשעה %H:%M')
           TAG="v$(date +'%Y%m%d-%H%M%S')"
-          PERMALINK="https://github.com/${REPO}/releases/latest/download/full-library.zip"
-          
-          RELEASE_BODY=$(cat <<EOF
-          # מאגר ספרים המותאם לאוצריא
-          
-          ### קבצים אלו מתעדכנים באופן אוטומטי עם כל שינוי שנעשה בספרים.
-          **גרסה מעודכנת לתאריך:** $CURRENT_TIME
-          
-          ---
-          
-          > [!IMPORTANT]
-          > ### להורדת המאגר המלא בקובץ אחד:
-          > [**לחץ כאן להורדה ישירה**]($PERMALINK)
-          
-          ---
-          
-          ### רשימת קבצים בודדים להורדה
-          להלן הקבצים המרכיבים את המאגר בחלוקה לפי ספרים:
-          EOF
-          )
 
-          # כותרת נקייה ללא אימוג'ים
           gh release create "$TAG" \
-            --title "עדכון מאגר ספרים" \
-            --notes "$RELEASE_BODY" \
+            --title "עדכון מאגר ספרים — $CURRENT_TIME" \
+            --notes "$(printf '## מאגר ספרים המותאם לאוצריא\n\nעדכון אוטומטי מתאריך **%s**\n\n---\n\n### סדר הקבצים ברשימה:\n1. המאגר המלא\n2. תיקיות ראשיות (שות, הלכה, תלמוד...)\n3. תתי-תיקיות לפי עומק' "$CURRENT_TIME")" \
             --latest
-            
+
           echo "TAG=$TAG" >> $GITHUB_ENV
 
       - name: Upload Assets
@@ -92,36 +116,52 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          TAG=${{ env.TAG }}
-          
-          RELEASE_DATA=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$REPO/releases/tags/$TAG")
-          RELEASE_ID=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', ''))")
+          TAG="${{ env.TAG }}"
+          export RELEASE_ID=$(gh release view "$TAG" --json id --jq '.id')
 
-          upload_file() {
-            local fpath="$1"
-            local safe_name="$2"
-            local label="$3"
-            ENCODED_NAME=$(echo -n "$safe_name" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
-            ENCODED_LABEL=$(echo -n "$label" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()))")
+          python3 - <<PYEOF
+          import os, urllib.parse, subprocess, sys
 
-            curl -s -o /tmp/upload_resp.txt -w "%{http_code}" \
-              -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/zip" \
-              --data-binary @"$fpath" \
-              "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=${ENCODED_NAME}&label=${ENCODED_LABEL}"
-          }
+          token   = os.environ['GITHUB_TOKEN']
+          repo    = os.environ['REPO']
+          rel_id  = os.environ['RELEASE_ID']
 
-          upload_file "dist/full-library.zip" "full-library.zip" "המאגר המלא - להורדה ישירה"
+          def upload(fpath, fname, ctype='application/zip'):
+              encoded = urllib.parse.quote(fname)
+              url = f"https://uploads.github.com/repos/{repo}/releases/{rel_id}/assets?name={encoded}"
+              r = subprocess.run([
+                  'curl', '-s', '-o', '/tmp/up.txt', '-w', '%{http_code}',
+                  '-X', 'POST',
+                  '-H', f'Authorization: token {token}',
+                  '-H', f'Content-Type: {ctype}',
+                  '--data-binary', f'@{fpath}',
+                  url
+              ], capture_output=True, text=True)
+              code = r.stdout.strip()
+              if code != '201':
+                  print(f'FAIL ({code}): {fname}', flush=True)
+                  with open('/tmp/up.txt') as f: print(f.read())
+                  sys.exit(1)
+              print(f'Uploaded: {fname}', flush=True)
 
-          count=1
-          for f in dist/*.zip; do
-            [ -e "$f" ] || continue
-            ORIGINAL_NAME=$(basename "$f")
-            [ "$ORIGINAL_NAME" = "full-library.zip" ] && continue
-            upload_file "$f" "book_${count}.zip" "$ORIGINAL_NAME"
-            count=$((count + 1))
-          done
+          # 1. המאגר המלא
+          upload('dist/full-library.zip', 'full-library.zip')
+
+          # 2. manifest.json
+          upload('dist/manifest.json', 'manifest.json', 'application/json')
+
+          # 3. תיקיות ראשיות (ללא __ בשם = עומק 1)
+          top_level = sorted([f for f in os.listdir('dist')
+                              if f.endswith('.zip') and '__' not in f and f != 'full-library.zip'])
+          for fname in top_level:
+              upload(f'dist/{fname}', fname)
+
+          # 4. תתי-תיקיות — לפי עומק עולה ואז אלפבית
+          sub = sorted([f for f in os.listdir('dist') if f.endswith('.zip') and '__' in f],
+                       key=lambda f: (f.count('__'), f))
+          for fname in sub:
+              upload(f'dist/{fname}', fname)
+          PYEOF
 
       - name: Cleanup Old Releases
         env:
@@ -129,7 +169,6 @@ jobs:
         run: |
           set -euo pipefail
           OLD_RELEASES=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | tail -n +3)
-          
           if [ -n "$OLD_RELEASES" ]; then
             for tag in $OLD_RELEASES; do
               gh release delete "$tag" --yes --cleanup-tag
