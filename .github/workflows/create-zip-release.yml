@@ -116,7 +116,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          CURRENT_TIME=$(date +'%d.%m.%Y בשעה %H:%M')
+          CURRENT_TIME=$(TZ='Asia/Jerusalem' date +'%d.%m.%Y בשעה %H:%M')
           TAG="v$(date +'%Y%m%d-%H%M%S')"
 
           gh release create "$TAG" \
