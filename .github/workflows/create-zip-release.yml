@@ -44,12 +44,12 @@ jobs:
           def has_files(path):
               return any(fns for _, _, fns in os.walk(path))
 
-          # ZIP של כל המאגר
-          make_zip('ספרים', 'dist/full-library.zip')
-          size = fmt_size(os.path.getsize('dist/full-library.zip'))
-          print(f"Created full-library.zip ({size})")
+          if not os.path.isdir('ספרים'):
+              raise SystemExit("תיקיית 'ספרים' לא נמצאה!")
 
-          # אסוף את כל התיקיות, ממוינות לפי עומק ואז אלפבית
+          make_zip('ספרים', 'dist/full-library.zip')
+          print(f"Created full-library.zip ({fmt_size(os.path.getsize('dist/full-library.zip'))})")
+
           all_dirs = []
           for root, dirs, files in os.walk('ספרים'):
               dirs.sort()
@@ -94,10 +94,8 @@ jobs:
           PYEOF
 
       - name: Create Release
-        id: create_rel
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           CURRENT_TIME=$(date +'%d.%m.%Y בשעה %H:%M')
@@ -105,62 +103,53 @@ jobs:
 
           gh release create "$TAG" \
             --title "עדכון מאגר ספרים — $CURRENT_TIME" \
-            --notes "$(printf '## מאגר ספרים המותאם לאוצריא\n\nעדכון אוטומטי מתאריך **%s**\n\n---\n\n### סדר הקבצים ברשימה:\n1. המאגר המלא\n2. תיקיות ראשיות (שות, הלכה, תלמוד...)\n3. תתי-תיקיות לפי עומק' "$CURRENT_TIME")" \
+            --notes "$(printf '## מאגר ספרים המותאם לאוצריא\n\nעדכון אוטומטי מתאריך **%s**\n\n---\n\n### סדר הקבצים:\n1. המאגר המלא\n2. תיקיות ראשיות\n3. תתי-תיקיות לפי עומק' "$CURRENT_TIME")" \
             --latest
 
-          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Upload Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           TAG="${{ env.TAG }}"
-          export RELEASE_ID=$(gh release view "$TAG" --json id --jq '.id')
-
-          python3 - <<PYEOF
-          import os, urllib.parse, subprocess, sys
-
-          token   = os.environ['GITHUB_TOKEN']
-          repo    = os.environ['REPO']
-          rel_id  = os.environ['RELEASE_ID']
-
-          def upload(fpath, fname, ctype='application/zip'):
-              encoded = urllib.parse.quote(fname)
-              url = f"https://uploads.github.com/repos/{repo}/releases/{rel_id}/assets?name={encoded}"
-              r = subprocess.run([
-                  'curl', '-s', '-o', '/tmp/up.txt', '-w', '%{http_code}',
-                  '-X', 'POST',
-                  '-H', f'Authorization: token {token}',
-                  '-H', f'Content-Type: {ctype}',
-                  '--data-binary', f'@{fpath}',
-                  url
-              ], capture_output=True, text=True)
-              code = r.stdout.strip()
-              if code != '201':
-                  print(f'FAIL ({code}): {fname}', flush=True)
-                  with open('/tmp/up.txt') as f: print(f.read())
-                  sys.exit(1)
-              print(f'Uploaded: {fname}', flush=True)
 
           # 1. המאגר המלא
-          upload('dist/full-library.zip', 'full-library.zip')
+          gh release upload "$TAG" dist/full-library.zip
+          echo "Uploaded: full-library.zip"
 
           # 2. manifest.json
-          upload('dist/manifest.json', 'manifest.json', 'application/json')
+          gh release upload "$TAG" dist/manifest.json
+          echo "Uploaded: manifest.json"
 
-          # 3. תיקיות ראשיות (ללא __ בשם = עומק 1)
-          top_level = sorted([f for f in os.listdir('dist')
-                              if f.endswith('.zip') and '__' not in f and f != 'full-library.zip'])
-          for fname in top_level:
-              upload(f'dist/{fname}', fname)
+          # 3. תיקיות ראשיות — ללא __ בשם
+          for f in dist/*.zip; do
+            fname=$(basename "$f")
+            [ "$fname" = "full-library.zip" ] && continue
+            [[ "$fname" == *"__"* ]] && continue
+            gh release upload "$TAG" "$f"
+            echo "Uploaded: $fname"
+          done
 
           # 4. תתי-תיקיות — לפי עומק עולה ואז אלפבית
-          sub = sorted([f for f in os.listdir('dist') if f.endswith('.zip') and '__' in f],
-                       key=lambda f: (f.count('__'), f))
+          python3 - <<'PYEOF'
+          import os, subprocess, sys
+
+          tag = os.environ['TAG']
+          sub = sorted(
+              [f for f in os.listdir('dist') if f.endswith('.zip') and '__' in f],
+              key=lambda f: (f.count('__'), f)
+          )
           for fname in sub:
-              upload(f'dist/{fname}', fname)
+              r = subprocess.run(
+                  ['gh', 'release', 'upload', tag, f'dist/{fname}'],
+                  capture_output=True, text=True
+              )
+              if r.returncode != 0:
+                  print(f'FAIL: {fname}\n{r.stderr}', flush=True)
+                  sys.exit(1)
+              print(f'Uploaded: {fname}', flush=True)
           PYEOF
 
       - name: Cleanup Old Releases
@@ -168,9 +157,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          OLD_RELEASES=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | tail -n +3)
-          if [ -n "$OLD_RELEASES" ]; then
-            for tag in $OLD_RELEASES; do
+          OLD=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | tail -n +3)
+          if [ -n "$OLD" ]; then
+            for tag in $OLD; do
               gh release delete "$tag" --yes --cleanup-tag
             done
           fi
