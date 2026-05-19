@@ -1,4 +1,4 @@
-![Uploading 9f357efa-5666-4ae2-9952-3e1f8c21aef9.jpg…]()
+<img width="2048" height="2048" alt="image" src="https://github.com/user-attachments/assets/1fb565c5-d159-455d-a892-ca0f73035b5e" />
 
 # OtzarLib
 מאגר ספרים מותאמים לתוכנת אוצריא
