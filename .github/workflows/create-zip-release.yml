@@ -47,9 +47,11 @@ jobs:
           if not os.path.isdir('ספרים'):
               raise SystemExit("תיקיית 'ספרים' לא נמצאה!")
 
+          # ZIP של כל המאגר
           make_zip('ספרים', 'dist/full-library.zip')
           print(f"Created full-library.zip ({fmt_size(os.path.getsize('dist/full-library.zip'))})")
 
+          # אסוף תיקיות ממוינות לפי עומק ואלפבית
           all_dirs = []
           for root, dirs, files in os.walk('ספרים'):
               dirs.sort()
@@ -58,32 +60,34 @@ jobs:
               rel = os.path.relpath(root, 'ספרים').replace('\\', '/')
               depth = rel.count('/')
               all_dirs.append((depth, rel, root))
-
           all_dirs.sort(key=lambda x: (x[0], x[1]))
 
           manifest = []
+          counter = 1
 
           for depth, rel, abs_path in all_dirs:
               if not has_files(abs_path):
-                  print(f"Skipping empty: {rel}")
                   continue
 
-              zip_name = rel.replace('/', '__').replace(' ', '_') + '.zip'
-              zip_path = os.path.join('dist', zip_name)
+              # שם קובץ ASCII בלבד — GitHub לא תומך בעברית בשם הנכס
+              zip_name = f"folder_{counter:04d}.zip"
+              counter += 1
 
+              zip_path = os.path.join('dist', zip_name)
               make_zip(abs_path, zip_path)
               size_str = fmt_size(os.path.getsize(zip_path))
-              print(f"Created {zip_name} ({size_str})")
+              print(f"Created {zip_name} = {rel} ({size_str})")
 
               parts = rel.split('/')
               parent = '/'.join(parts[:-1])
 
               manifest.append({
-                  "name": os.path.basename(abs_path),
-                  "path": rel,
-                  "zip": zip_name,
+                  "name":  os.path.basename(abs_path),   # שם עברי לתצוגה
+                  "path":  rel,
+                  "zip":   zip_name,                      # שם ASCII להורדה
+                  "label": os.path.basename(abs_path),   # label לגיטאב
                   "parent": parent,
-                  "size": size_str,
+                  "size":  size_str,
                   "depth": depth
               })
 
@@ -103,7 +107,7 @@ jobs:
 
           gh release create "$TAG" \
             --title "עדכון מאגר ספרים — $CURRENT_TIME" \
-            --notes "$(printf '## מאגר ספרים המותאם לאוצריא\n\nעדכון אוטומטי מתאריך **%s**\n\n---\n\n### סדר הקבצים:\n1. המאגר המלא\n2. תיקיות ראשיות\n3. תתי-תיקיות לפי עומק' "$CURRENT_TIME")" \
+            --notes "$(printf '## מאגר ספרים המותאם לאוצריא\n\nעדכון אוטומטי מתאריך **%s**' "$CURRENT_TIME")" \
             --latest
 
           echo "TAG=$TAG" >> "$GITHUB_ENV"
@@ -133,10 +137,12 @@ jobs:
               release_id = json.loads(resp.read())['id']
           print(f"Release ID: {release_id}", flush=True)
 
-          def upload(fpath, fname, ctype='application/zip'):
-              print(f"Uploading: {fname}", flush=True)
-              encoded = urllib.parse.quote(fname)
-              url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={encoded}"
+          def upload(fpath, fname, label='', ctype='application/zip'):
+              print(f"Uploading: {fname} ({label})", flush=True)
+              # name חייב להיות ASCII — GitHub לא מקבל עברית
+              url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={fname}"
+              if label:
+                  url += f"&label={urllib.parse.quote(label)}"
               r = subprocess.run([
                   'curl', '--fail-with-body', '-s',
                   '-X', 'POST',
@@ -150,18 +156,28 @@ jobs:
                   sys.exit(1)
               print(f"Done: {fname}", flush=True)
 
-          upload('dist/full-library.zip', 'full-library.zip')
-          upload('dist/manifest.json', 'manifest.json', 'application/json')
+          # טען manifest כדי לדעת מה label של כל zip
+          with open('dist/manifest.json', encoding='utf-8') as f:
+              manifest = json.load(f)
+          label_map = {item['zip']: item['label'] for item in manifest}
 
-          top = sorted([f for f in os.listdir('dist')
-                        if f.endswith('.zip') and '__' not in f and f != 'full-library.zip'])
-          for fname in top:
-              upload(f'dist/{fname}', fname)
+          # 1. המאגר המלא
+          upload('dist/full-library.zip', 'full-library.zip', 'המאגר המלא')
 
-          sub = sorted([f for f in os.listdir('dist') if f.endswith('.zip') and '__' in f],
-                       key=lambda f: (f.count('__'), f))
-          for fname in sub:
-              upload(f'dist/{fname}', fname)
+          # 2. manifest.json
+          upload('dist/manifest.json', 'manifest.json', '', 'application/json')
+
+          # 3. תיקיות ראשיות (folder_XXXX.zip ללא תת-תיקיות)
+          top_zips = sorted([item for item in manifest if item['depth'] == 0],
+                            key=lambda x: x['zip'])
+          for item in top_zips:
+              upload(f"dist/{item['zip']}", item['zip'], item['label'])
+
+          # 4. תתי-תיקיות לפי עומק עולה
+          sub_zips = sorted([item for item in manifest if item['depth'] > 0],
+                            key=lambda x: (x['depth'], x['zip']))
+          for item in sub_zips:
+              upload(f"dist/{item['zip']}", item['zip'], item['label'])
           PYEOF
 
       - name: Cleanup Old Releases
