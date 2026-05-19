@@ -62,11 +62,25 @@ jobs:
               all_dirs.append((depth, rel, root))
           all_dirs.sort(key=lambda x: (x[0], x[1]))
 
+          # תיקיות שמקבלות ZIP אחד בלבד — ללא ZIPים לתת-תיקיות שלהן
+          NO_SUBZIP = [
+              'תלמוד ומפרשיו/תלמוד בבלי/שס וגשל',
+              'כללים ומערכות/אנציקלופדיה תלמודית',
+          ]
+
+          def is_excluded(rel):
+              for parent in NO_SUBZIP:
+                  if rel.startswith(parent + '/'):
+                      return True
+              return False
+
           manifest = []
           counter = 1
 
           for depth, rel, abs_path in all_dirs:
               if not has_files(abs_path):
+                  continue
+              if is_excluded(rel):
                   continue
 
               # שם קובץ ASCII בלבד — GitHub לא תומך בעברית בשם הנכס
