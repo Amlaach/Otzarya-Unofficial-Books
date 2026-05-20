@@ -111,6 +111,15 @@ jobs:
           print(f"\nmanifest.json נוצר עם {len(manifest)} ערכים")
           PYEOF
 
+      - name: Commit manifest to repo
+        run: |
+          cp dist/manifest.json manifest.json
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add manifest.json
+          git diff --cached --quiet || git commit -m "Update manifest.json [skip ci]"
+          git push
+
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
