@@ -108,16 +108,23 @@ jobs:
           with open('dist/manifest.json', 'w', encoding='utf-8') as f:
               json.dump(manifest, f, ensure_ascii=False, indent=2)
 
+          # צור books_data.js עבור התוסף (ללא network access)
+          import json as json2
+          books_js = 'const BOOKS_DATA = ' + json2.dumps(manifest, ensure_ascii=False) + ';\n'
+          with open('dist/books_data.js', 'w', encoding='utf-8') as f:
+              f.write(books_js)
+
           print(f"\nmanifest.json נוצר עם {len(manifest)} ערכים")
           PYEOF
 
       - name: Commit manifest to repo
         run: |
           cp dist/manifest.json manifest.json
+          cp dist/books_data.js books_data.js
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
-          git add manifest.json
-          git diff --cached --quiet || git commit -m "Update manifest.json [skip ci]"
+          git add manifest.json books_data.js
+          git diff --cached --quiet || git commit -m "Update manifest + books_data [skip ci]"
           git push
 
       - name: Create Release
