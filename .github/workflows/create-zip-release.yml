@@ -3,8 +3,10 @@ name: Auto Zip and Release
 on:
   push:
     branches: [main]
+    paths:
+      - 'ספרים/**'
   workflow_dispatch:
-
+  
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
