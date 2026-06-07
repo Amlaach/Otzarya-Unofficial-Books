@@ -243,4 +243,5 @@ jobs:
           PASSWORD: ${{ secrets.PASSWORD }}
           TAG: ${{ env.TAG }}
         run: |
+          git config core.quotePath false
           python send_update.py
