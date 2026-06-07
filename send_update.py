@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 from collections import defaultdict
 
 # --- הגדרות ---
-TOPIC_ID = "437"
+TOPIC_ID = "437" # מספר הנושא שלך באוצריא
 FORUM_URL = "https://forum.otzaria.org"
 
 def get_changed_books():
@@ -129,7 +129,10 @@ if __name__ == "__main__":
     changes_text = get_changed_books()
     
     if "לא נמצאו שינויים ישירים בספרים" not in changes_text:
+        # בניית הפוסט הסופי עם הלינק והחתימה המודגשת של הבוט בסוף
         final_post = changes_text + f"\n\n---\nניתן להוריד את הקבצים המעודכנים מ-[עמוד ה-Releases](https://github.com/{repo}/releases/latest)."
+        final_post += "\n\n**פוסט זה נכתב ע\"י בוט**"
+        
         post_to_discourse(final_post)
     else:
         print("הריצה הסתיימה: לא זוהו שינויים בקבצי הספרים, לכן לא פורסם פוסט בפורום.")
