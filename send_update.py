@@ -137,8 +137,9 @@ if __name__ == "__main__":
     changes_text = get_changed_books()
     
     if "לא נמצאו שינויים ישירים בספרים" not in changes_text:
-        final_post = changes_text + f"\n\n---\nניתן להוריד את הקבצים המעודכנים מ-[עמוד ה-Releases](https://github.com/{repo}/releases/latest)."
-        final_post += "\n\n**פוסט זה נכתב ע\"י בוט**"
+        final_post = changes_text + '\n\n---\nניתן להוריד באמצעות התוסף "[הורדת מאגרי גיטאב](https://otzaria.org/plugins/6a0081ae54ae49eaed8d6a73)"\n'
+        final_post += f'או מ-[עמוד ה-Releases](https://github.com/{repo}/releases/latest).\n\n'
+        final_post += '**פוסט זה נכתב ע"י בוט**'
         
         post_to_nodebb(final_post)
     else:
