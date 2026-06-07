@@ -1,12 +1,11 @@
 import os
 import subprocess
 import requests
-from bs4 import BeautifulSoup
 from collections import defaultdict
 
 # --- הגדרות ---
-TOPIC_ID = "437" # מספר הנושא שלך באוצריא
-FORUM_URL = "https://forum.otzaria.org"
+TOPIC_ID = "437" 
+FORUM_URL = "https://otzaria.org/forum"
 
 def get_changed_books():
     before_sha = os.environ.get("BEFORE_SHA")
@@ -35,17 +34,13 @@ def get_changed_books():
         if not filepath.startswith("ספרים/"):
             continue
             
-        # מנקה את הקידומת 'ספרים/' כדי לחלץ את שם התיקייה
         rel_path = filepath[len("ספרים/"):]
         path_parts = rel_path.split('/')
-        
-        # חילוץ שם הקובץ ללא סיומת (למשל מוחק .txt)
         filename = os.path.splitext(path_parts[-1])[0]
         
         if len(path_parts) == 1:
             folder = "תיקייה ראשית"
         else:
-            # התיקייה הישירה שבה נמצא הקובץ
             folder = path_parts[-2]
         
         if status.startswith('A'):
@@ -54,7 +49,6 @@ def get_changed_books():
             modified[folder].append(filename)
             
     msg = ""
-    
     if added:
         msg += "### **נוסף למאגר**\n"
         for folder, books in added.items():
@@ -81,7 +75,7 @@ def get_changed_books():
         
     return msg.strip() if msg else "בוצעו עדכונים טכניים במאגר (לא נמצאו שינויים ישירים בספרים)."
 
-def post_to_discourse(message):
+def post_to_nodebb(message):
     username = os.environ.get("USER_NAME")
     password = os.environ.get("PASSWORD")
     
@@ -90,37 +84,52 @@ def post_to_discourse(message):
         return
 
     session = requests.Session()
+    # התחזות לדפדפן כדי לעבור חסימות אבטחה של אוצריא
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
+    }
+    session.headers.update(headers)
     
     try:
-        print("1. מקבל CSRF Token...")
-        home_req = session.get(FORUM_URL)
-        soup = BeautifulSoup(home_req.text, 'html.parser')
-        csrf_token = soup.find('meta', {'name': 'csrf-token'})['content']
-        
-        headers = {
-            'X-CSRF-Token': csrf_token,
-            'X-Requested-With': 'XMLHttpRequest'
-        }
-        
-        print("2. מתחבר לפורום...")
-        login_data = {'login': username, 'password': password}
-        login_req = session.post(f"{FORUM_URL}/session", data=login_data, headers=headers)
-        
-        if login_req.status_code != 200:
-            print("שגיאת התחברות! ודא שהסודות של המשתמש והסיסמה נכונים.")
+        print(f"1. מתחבר ל-{FORUM_URL} כדי למשוך CSRF Token (NodeBB API)...")
+        config_res = session.get(f"{FORUM_URL}/api/config")
+        if config_res.status_code != 200:
+            print(f"שגיאה בגישה לשרת ({config_res.status_code})")
             return
             
-        print("3. מפרסם תגובה בנושא...")
-        post_data = {'topic_id': TOPIC_ID, 'raw': message}
-        post_req = session.post(f"{FORUM_URL}/posts", data=post_data, headers=headers)
+        csrf_token = config_res.json().get('csrf_token')
+        if not csrf_token:
+            print("לא נמצא אסימון אבטחה!")
+            return
+            
+        print("2. מבצע לוגין עם השם והסיסמה של הבוט...")
+        session.headers.update({'x-csrf-token': csrf_token})
         
-        if post_req.status_code == 200:
-            print("ההודעה פורסמה בהצלחה!")
+        login_data = {
+            'username': username,
+            'password': password,
+            '_csrf': csrf_token
+        }
+        login_res = session.post(f"{FORUM_URL}/login", data=login_data)
+        
+        if login_res.status_code != 200:
+            print(f"שגיאת התחברות (סטטוס {login_res.status_code}). ודא ששם המשתמש (בוט מאגר גיטאב) והסיסמה נכונים בהגדרות הסודות.")
+            return
+            
+        print("3. שולח את העדכון לנושא 437...")
+        reply_url = f"{FORUM_URL}/api/v3/topics/{TOPIC_ID}/reply"
+        reply_data = {"content": message}
+        
+        post_res = session.post(reply_url, json=reply_data)
+        
+        if post_res.status_code == 200:
+            print("🎉 ההודעה פורסמה בהצלחה בפורום אוצריא!")
         else:
-            print(f"שגיאה בפרסום: {post_req.text}")
+            print(f"שגיאה בעת פרסום ההודעה (סטטוס {post_res.status_code}): {post_res.text}")
             
     except Exception as e:
-        print(f"שגיאה בתקשורת מול הפורום: {e}")
+        print(f"התרחשה שגיאה במהלך התקשורת עם שרת הפורום: {e}")
 
 if __name__ == "__main__":
     tag = os.environ.get("TAG", "גרסה חדשה")
@@ -129,10 +138,9 @@ if __name__ == "__main__":
     changes_text = get_changed_books()
     
     if "לא נמצאו שינויים ישירים בספרים" not in changes_text:
-        # בניית הפוסט הסופי עם הלינק והחתימה המודגשת של הבוט בסוף
         final_post = changes_text + f"\n\n---\nניתן להוריד את הקבצים המעודכנים מ-[עמוד ה-Releases](https://github.com/{repo}/releases/latest)."
         final_post += "\n\n**פוסט זה נכתב ע\"י בוט**"
         
-        post_to_discourse(final_post)
+        post_to_nodebb(final_post)
     else:
         print("הריצה הסתיימה: לא זוהו שינויים בקבצי הספרים, לכן לא פורסם פוסט בפורום.")
