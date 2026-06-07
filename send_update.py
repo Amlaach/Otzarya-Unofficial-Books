@@ -84,7 +84,6 @@ def post_to_nodebb(message):
         return
 
     session = requests.Session()
-    # התחזות לדפדפן כדי לעבור חסימות אבטחה של אוצריא
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json'
@@ -92,7 +91,7 @@ def post_to_nodebb(message):
     session.headers.update(headers)
     
     try:
-        print(f"1. מתחבר ל-{FORUM_URL} כדי למשוך CSRF Token (NodeBB API)...")
+        print(f"1. מתחבר ל-{FORUM_URL} כדי למשוך CSRF Token...")
         config_res = session.get(f"{FORUM_URL}/api/config")
         if config_res.status_code != 200:
             print(f"שגיאה בגישה לשרת ({config_res.status_code})")
@@ -114,11 +113,11 @@ def post_to_nodebb(message):
         login_res = session.post(f"{FORUM_URL}/login", data=login_data)
         
         if login_res.status_code != 200:
-            print(f"שגיאת התחברות (סטטוס {login_res.status_code}). ודא ששם המשתמש (בוט מאגר גיטאב) והסיסמה נכונים בהגדרות הסודות.")
+            print(f"שגיאת התחברות (סטטוס {login_res.status_code}). ודא ששם המשתמש והסיסמה נכונים בהגדרות הסודות.")
             return
             
         print("3. שולח את העדכון לנושא 437...")
-        reply_url = f"{FORUM_URL}/api/v3/topics/{TOPIC_ID}/reply"
+        reply_url = f"{FORUM_URL}/api/v3/topics/{TOPIC_ID}"
         reply_data = {"content": message}
         
         post_res = session.post(reply_url, json=reply_data)
