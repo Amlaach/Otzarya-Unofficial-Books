@@ -21,57 +21,65 @@ def get_changed_books():
     except subprocess.CalledProcessError:
         return "לא הצלחתי לשלוף את רשימת השינויים המדויקת מגיט."
 
+    INCOMPATIBLE_FOLDER = "ספרים שאינם מותאמים לאוצריא"
     added = defaultdict(list)
     modified = defaultdict(list)
-    
+
     for line in output.strip().split('\n'):
         if not line: continue
         parts = line.split(maxsplit=1)
         if len(parts) < 2: continue
-        
+
         status, filepath = parts[0], parts[1]
-        
+
         if not filepath.startswith("ספרים/"):
             continue
-            
+
         rel_path = filepath[len("ספרים/"):]
         path_parts = rel_path.split('/')
         filename = os.path.splitext(path_parts[-1])[0]
-        
+        is_incompatible = path_parts[0] == INCOMPATIBLE_FOLDER
+
         if len(path_parts) == 1:
             folder = "תיקייה ראשית"
         else:
             folder = path_parts[-2]
-        
+
         if status.startswith('A'):
-            added[folder].append(filename)
+            added[folder].append((filename, is_incompatible))
         elif status.startswith('M'):
-            modified[folder].append(filename)
-            
+            modified[folder].append((filename, is_incompatible))
+
+    def format_section(books_dict):
+        compatible = {f: [b for b, inc in books if not inc] for f, books in books_dict.items()}
+        incompatible = {f: [b for b, inc in books if inc] for f, books in books_dict.items()}
+        compatible = {f: bs for f, bs in compatible.items() if bs}
+        incompatible = {f: bs for f, bs in incompatible.items() if bs}
+
+        lines = ""
+        for label, group in [("(ספרים מותאמים לאוצריא)", compatible), ("(ספרים שאינם מותאמים לאוצריא)", incompatible)]:
+            if not group:
+                continue
+            lines += f"**{label}**\n"
+            for folder, books in group.items():
+                if folder == "תיקייה ראשית":
+                    for b in books:
+                        lines += f"- {b}\n"
+                else:
+                    lines += f"- {folder}:\n"
+                    for b in books:
+                        lines += f"{b}\n"
+            lines += "\n"
+        return lines
+
     msg = ""
     if added:
         msg += "### **נוסף למאגר**\n"
-        for folder, books in added.items():
-            if folder == "תיקייה ראשית":
-                for b in books:
-                    msg += f"- {b}\n"
-            else:
-                msg += f"- {folder}:\n"
-                for b in books:
-                    msg += f"{b}\n"
-            msg += "\n"
-            
+        msg += format_section(added)
+
     if modified:
         msg += "### **עודכן במאגר**\n"
-        for folder, books in modified.items():
-            if folder == "תיקייה ראשית":
-                for b in books:
-                    msg += f"- {b}\n"
-            else:
-                msg += f"- {folder}:\n"
-                for b in books:
-                    msg += f"{b}\n"
-            msg += "\n"
+        msg += format_section(modified)
         
     return msg.strip() if msg else "בוצעו עדכונים טכניים במאגר (לא נמצאו שינויים ישירים בספרים)."
 
@@ -137,7 +145,7 @@ if __name__ == "__main__":
     changes_text = get_changed_books()
     
     if "לא נמצאו שינויים ישירים בספרים" not in changes_text:
-        final_post = changes_text + '\n\n---\nניתן להוריד באמצעות התוסף "[הורדת מאגרי גיטאב](https://otzaria.org/plugins/6a0081ae54ae49eaed8d6a73)"\n'
+        final_post = changes_text + '\n\n---\nניתן להוריד באמצעות התוסף "[הורדת מאגר גיטאב](https://otzaria.org/plugins/6a0081ae54ae49eaed8d6a73)"\n'
         final_post += f'או מ-[עמוד ה-Releases](https://github.com/{repo}/releases/latest).\n\n'
         final_post += '**פוסט זה נכתב ע"י בוט**'
         
