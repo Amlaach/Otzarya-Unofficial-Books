@@ -10,7 +10,7 @@
 מכיוון שהמאגר מכיל קבצים גדולים, הורדה רגילה דרך כפתור ה-"Download ZIP" הירוק של GitHub עלולה לשבש את הקבצים. 
 
 **מומלץ להוריד את המאגר המלא מכאן:**
-# [לחצו כאן להורדת המאגר המלא (ZIP)](https://github.com/YairDaniel123/Otzarya-Library/releases/download/latest-build/Full-Repository-Download.zip)
+# [לחצו כאן להורדת המאגר המלא (ZIP)](https://github.com/Otzarya-Org/Otzarya-Library/releases/latest/download/full-library.zip)
 
 הבהרה חשובה:
 **הקבצים מיועדים לשימוש פרטי בלבד ואינם חלק מההפצה הרשמית של התוכנה.**
