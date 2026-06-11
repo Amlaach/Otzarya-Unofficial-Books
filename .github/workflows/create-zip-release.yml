@@ -137,12 +137,15 @@ jobs:
         run: |
           set -euo pipefail
           CURRENT_TIME=$(TZ='Asia/Jerusalem' date +'%d.%m.%Y בשעה %H:%M')
-          TAG="v$(date +'%Y%m%d-%H%M%S')"
-
-          gh release create "$TAG" \
-            --title "עדכון מאגר ספרים — $CURRENT_TIME" \
-            --notes "$(printf '## מאגר ספרים המותאם לאוצריא\n\nעדכון אוטומטי מתאריך **%s**' "$CURRENT_TIME")" \
-            --latest
+          TAG="latest"
+          
+          gh release delete latest --yes --cleanup-tag || true
+          
+          gh release create "latest" \
+          --title "מאגר ספרים עדכני" \
+          --notes "$(printf '## מאגר ספרים\n\nעדכון אוטומטי מתאריך **%s**' "$CURRENT_TIME")" \
+          --latest
+          
 
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
