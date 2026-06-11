@@ -2,11 +2,12 @@ name: Auto Zip and Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - 'ספרים/**'
   workflow_dispatch:
-  
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -16,24 +17,40 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           lfs: true
           fetch-depth: 2
-          
+
+      - name: Set up Python for Bot
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Bot Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
       - name: Build ZIPs and Manifest
         run: |
           python3 - <<'PYEOF'
-          import os, json, zipfile
+          import os
+          import json
+          import zipfile
 
           os.makedirs('dist', exist_ok=True)
 
           def fmt_size(b):
-              if b >= 1 << 30: return f"{b / (1 << 30):.1f} GB"
-              if b >= 1 << 20: return f"{b / (1 << 20):.1f} MB"
-              if b >= 1 << 10: return f"{b / (1 << 10):.0f} KB"
+              if b >= 1 << 30:
+                  return f"{b / (1 << 30):.1f} GB"
+              if b >= 1 << 20:
+                  return f"{b / (1 << 20):.1f} MB"
+              if b >= 1 << 10:
+                  return f"{b / (1 << 10):.0f} KB"
               return f"{b} B"
 
           def make_zip(src_dir, zip_path):
@@ -50,11 +67,8 @@ jobs:
           if not os.path.isdir('ספרים'):
               raise SystemExit("תיקיית 'ספרים' לא נמצאה!")
 
-          # ZIP של כל המאגר
           make_zip('ספרים', 'dist/full-library.zip')
-          print(f"Created full-library.zip ({fmt_size(os.path.getsize('dist/full-library.zip'))})")
 
-          # אסוף תיקיות ממוינות לפי עומק ואלפבית
           all_dirs = []
           for root, dirs, files in os.walk('ספרים'):
               dirs.sort()
@@ -65,7 +79,6 @@ jobs:
               all_dirs.append((depth, rel, root))
           all_dirs.sort(key=lambda x: (x[0], x[1]))
 
-          # תיקיות שמקבלות ZIP אחד בלבד — ללא ZIPים לתת-תיקיות שלהן
           NO_SUBZIP = [
               'תלמוד ומפרשיו/תלמוד בבלי/שס וגשל',
               'כללים ומערכות/אנציקלופדיה תלמודית',
@@ -86,38 +99,31 @@ jobs:
               if is_excluded(rel):
                   continue
 
-              # שם קובץ ASCII בלבד — GitHub לא תומך בעברית בשם הנכס
               zip_name = f"folder_{counter:04d}.zip"
               counter += 1
 
               zip_path = os.path.join('dist', zip_name)
               make_zip(abs_path, zip_path)
               size_str = fmt_size(os.path.getsize(zip_path))
-              print(f"Created {zip_name} = {rel} ({size_str})")
-
-              parts = rel.split('/')
-              parent = '/'.join(parts[:-1])
 
               manifest.append({
-                  "name":  os.path.basename(abs_path),   # שם עברי לתצוגה
-                  "path":  rel,
-                  "zip":   zip_name,                      # שם ASCII להורדה
-                  "label": os.path.basename(abs_path),   # label לגיטאב
-                  "parent": parent,
-                  "size":  size_str,
+                  "name": os.path.basename(abs_path),
+                  "path": rel,
+                  "zip": zip_name,
+                  "label": os.path.basename(abs_path),
+                  "parent": '/'.join(rel.split('/')[:-1]),
+                  "size": size_str,
                   "depth": depth
               })
 
           with open('dist/manifest.json', 'w', encoding='utf-8') as f:
               json.dump(manifest, f, ensure_ascii=False, indent=2)
 
-          # צור books_data.js עבור התוסף (ללא network access)
-          import json as json2
-          books_js = 'const BOOKS_DATA = ' + json2.dumps(manifest, ensure_ascii=False) + ';\n'
+          books_js = 'const BOOKS_DATA = ' + json.dumps(manifest, ensure_ascii=False) + ';\n'
           with open('dist/books_data.js', 'w', encoding='utf-8') as f:
               f.write(books_js)
 
-          print(f"\nmanifest.json נוצר עם {len(manifest)} ערכים")
+          print(f"manifest.json נוצר עם {len(manifest)} ערכים")
           PYEOF
 
       - name: Commit manifest to repo
@@ -131,52 +137,66 @@ jobs:
           git pull --rebase origin main
           git push
 
-      - name: Create Release
+      - name: Create or Update Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           CURRENT_TIME=$(TZ='Asia/Jerusalem' date +'%d.%m.%Y בשעה %H:%M')
-          TAG="latest"
-          
-          gh release delete latest --yes --cleanup-tag || true
-          
-          gh release create "latest" \
-          --title "מאגר ספרים עדכני" \
-          --notes "$(printf '## מאגר ספרים\n\nעדכון אוטומטי מתאריך **%s**' "$CURRENT_TIME")" \
-          --latest
-          
-
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          gh release view latest >/dev/null 2>&1 || gh release create latest --title "מאגר ספרים עדכני" --notes "initial" --latest
+          gh release edit latest --title "מאגר ספרים עדכני" --notes "$(printf '## עדכון אוטומטי\n\nתאריך: **%s**' "$CURRENT_TIME")" --latest
+          echo "TAG=latest" >> "$GITHUB_ENV"
 
       - name: Upload Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          export TAG="${{ env.TAG }}"
-
           python3 - <<'PYEOF'
-          import os, json, sys, urllib.parse, urllib.request, subprocess
+          import os
+          import json
+          import sys
+          import urllib.parse
+          import urllib.request
+          import subprocess
 
           token = os.environ['GITHUB_TOKEN']
-          repo  = os.environ['REPO']
-          tag   = os.environ['TAG']
+          repo = os.environ['REPO']
 
-          # שליפת numeric release ID
           req = urllib.request.Request(
-              f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
-              headers={'Authorization': f'token {token}',
-                       'Accept': 'application/vnd.github+json',
-                       'User-Agent': 'otzaria-uploader'}
+              f"https://api.github.com/repos/{repo}/releases/tags/latest",
+              headers={
+                  'Authorization': f'token {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'otzaria-uploader'
+              }
           )
+
           with urllib.request.urlopen(req) as resp:
               release_id = json.loads(resp.read())['id']
-          print(f"Release ID: {release_id}", flush=True)
+
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/releases/{release_id}/assets",
+              headers={
+                  'Authorization': f'token {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'otzaria-uploader'
+              }
+          )
+
+          with urllib.request.urlopen(req) as resp:
+              assets = json.loads(resp.read())
+
+          for asset in assets:
+              aid = asset['id']
+              del_req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/releases/assets/{aid}",
+                  headers={'Authorization': f'token {token}'},
+                  method='DELETE'
+              )
+              urllib.request.urlopen(del_req)
 
           def upload(fpath, fname, label='', ctype='application/zip'):
-              print(f"Uploading: {fname} ({label})", flush=True)
-              # name חייב להיות ASCII — GitHub לא מקבל עברית
               url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={fname}"
               if label:
                   url += f"&label={urllib.parse.quote(label)}"
@@ -189,54 +209,34 @@ jobs:
                   url
               ])
               if r.returncode != 0:
-                  print(f"FAIL: {fname}", flush=True)
                   sys.exit(1)
-              print(f"Done: {fname}", flush=True)
 
-          # טען manifest כדי לדעת מה label של כל zip
           with open('dist/manifest.json', encoding='utf-8') as f:
               manifest = json.load(f)
-          label_map = {item['zip']: item['label'] for item in manifest}
 
-          # 1. המאגר המלא
           upload('dist/full-library.zip', 'full-library.zip', 'המאגר המלא')
-
-          # 2. manifest.json
           upload('dist/manifest.json', 'manifest.json', '', 'application/json')
 
-          # 3. תיקיות ראשיות (folder_XXXX.zip ללא תת-תיקיות)
-          top_zips = sorted([item for item in manifest if item['depth'] == 0],
-                            key=lambda x: x['zip'])
+          top_zips = sorted([item for item in manifest if item['depth'] == 0], key=lambda x: x['zip'])
           for item in top_zips:
               upload(f"dist/{item['zip']}", item['zip'], item['label'])
 
-          # 4. תתי-תיקיות לפי עומק עולה
-          sub_zips = sorted([item for item in manifest if item['depth'] > 0],
-                            key=lambda x: (x['depth'], x['zip']))
+          sub_zips = sorted([item for item in manifest if item['depth'] > 0], key=lambda x: (x['depth'], x['zip']))
           for item in sub_zips:
               upload(f"dist/{item['zip']}", item['zip'], item['label'])
           PYEOF
 
       - name: Cleanup Old Releases
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          OLD=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | tail -n +3)
+          OLD=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -v '^latest$' || true)
           if [ -n "$OLD" ]; then
             for tag in $OLD; do
               gh release delete "$tag" --yes --cleanup-tag
             done
           fi
-      - name: Set up Python for Bot
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Bot Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
 
       - name: Run Update Script
         env:
@@ -244,7 +244,7 @@ jobs:
           AFTER_SHA: ${{ github.event.after }}
           USER_NAME: ${{ secrets.USER_NAME }}
           PASSWORD: ${{ secrets.PASSWORD }}
-          TAG: ${{ env.TAG }}
+          TAG: latest
         run: |
           git config core.quotePath false
           python send_update.py
